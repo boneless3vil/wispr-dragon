@@ -1,0 +1,92 @@
+commands:
+  # Navigation and control
+  - trigger: "go to sleep"
+    action: sleep_mode
+    description: "Pause speech recognition"
+
+  - trigger: "wake up"
+    action: wake_mode
+    description: "Resume speech recognition"
+
+  - trigger: "scratch that"
+    action: undo_last
+    description: "Undo the last transcribed text"
+
+  - trigger: "correct that"
+    action: open_correction_window
+    description: "Open correction window for the last transcription"
+
+  - trigger: "correct {word}"
+    action: open_correction_window
+    description: "Open correction window for a specific word"
+
+  # Mode switching
+  - trigger: "switch to command mode"
+    action: switch_command
+    description: "Switch to command mode"
+
+  - trigger: "switch to dictation mode"
+    action: switch_dictation
+    description: "Switch to dictation mode"
+
+  # Editing shortcuts
+  - trigger: "select all"
+    action: keystroke
+    keys: "ctrl+a"
+
+  - trigger: "copy that"
+    action: keystroke
+    keys: "ctrl+c"
+
+  - trigger: "paste that"
+    action: keystroke
+    keys: "ctrl+v"
+
+  - trigger: "cut that"
+    action: keystroke
+    keys: "ctrl+x"
+
+  - trigger: "undo that"
+    action: keystroke
+    keys: "ctrl+z"
+
+  - trigger: "redo that"
+    action: keystroke
+    keys: "ctrl+shift+z"
+
+  - trigger: "save file"
+    action: keystroke
+    keys: "ctrl+s"
+
+  - trigger: "find"
+    action: keystroke
+    keys: "ctrl+f"
+
+  # Navigation
+  - trigger: "go home"
+    action: keystroke
+    keys: "Home"
+
+  - trigger: "go end"
+    action: keystroke
+    keys: "End"
+
+  - trigger: "page up"
+    action: keystroke
+    keys: "Page_Up"
+
+  - trigger: "page down"
+    action: keystroke
+    keys: "Page_Down"
+
+  - trigger: "press enter"
+    action: keystroke
+    keys: "Return"
+
+  - trigger: "press escape"
+    action: keystroke
+    keys: "Escape"
+
+  - trigger: "press tab"
+    action: keystroke
+    keys: "Tab"
