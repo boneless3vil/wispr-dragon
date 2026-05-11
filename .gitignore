@@ -1,0 +1,109 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# API Keys and Secrets
+OPENAI_API_KEY
+.openai_api_key
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+conda-env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# User Configuration
+~/.wispr-dragon/
+.wispr-dragon/
+
+# Large Model Files (git lfs should be used if tracking)
+*.pt
+*.pth
+*.bin
+*.onnx
+models/
+checkpoints/
+
+# Audio Files
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+audio_recordings/
+test_audio/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# Temporary files
+*.tmp
+*.bak
+*.temp
+*~
+
+# Build artifacts
+*.so
+*.o
+*.a
+
+# Backup files (from old program)
+wispr_dragon_old/
+wispr-dragon-old/
+*.backup
+*.old
