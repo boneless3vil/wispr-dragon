@@ -4,6 +4,37 @@ This document tracks all changes made to the Wispr_Dragon application codebase.
 
 ## Build History
 
+### Build 2026-05-13: Naming Consistency - Wispr_Dragon
+
+**Branch:** feature/rename-wispr_dragon  
+**Commit:** e81aa00  
+**Changes:**
+- Renamed package from `wispr-dragon` to `wispr_dragon` for consistency
+- Updated `pyproject.toml` project name and console script
+- Updated `environment.yml` Conda environment name
+- Updated config directory from `~/.wispr-dragon` to `~/.wispr_dragon` with backward compatibility fallback
+- Updated all documentation files (README, QUICKSTART, SETUP_OPENAI_API, START_HERE, BUILD_LOG, GITHUB_SETUP)
+- Updated .gitignore for new config directory
+- Updated config path references in `config.py`, `command_mode.py`, `dictionary.py`
+
+**Testing Status:**
+- Code changes: ✅ Applied
+- Package name: ✅ Updated to wispr_dragon
+- Config paths: ✅ Updated with fallback compatibility
+- Documentation: ✅ Updated
+
+**Manual Steps Still Required:**
+- Rename local directory: `/home/jon/wispr-dragon/` → `/home/jon/wispr_dragon/`
+- Recreate Conda environment: `conda env remove -n wispr-dragon && conda env create -f environment.yml`
+- Update GitHub repository name (optional): `wispr-dragon` → `wispr_dragon`
+
+**Next Steps:**
+- After directory rename, test application with new paths
+- Verify Conda environment creation with new name
+- Optional: merge back to main when stable
+
+---
+
 ### Build 2026-05-12: AMD GPU Support Implementation
 
 **Branch:** feature/amd-gpu-support  
