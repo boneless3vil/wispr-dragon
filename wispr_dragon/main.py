@@ -31,7 +31,21 @@ def create_engine(config: Config):
     backend = config.engine.backend
 
     if backend == "auto":
-        # Try faster-whisper first, fall back to openai-whisper, then openai-api
+        # Check for AMD GPU first - prefer openai-whisper for ROCm compatibility
+        try:
+            import torch
+            has_amd_gpu = hasattr(torch.version, 'hip') and torch.version.hip
+            if has_amd_gpu:
+                # AMD GPU detected - use openai-whisper for ROCm support
+                from .engine.openai_whisper_engine import OpenAIWhisperEngine
+                engine = OpenAIWhisperEngine()
+                if engine.is_available():
+                    logger.info("AMD GPU detected - using openai-whisper engine for ROCm support")
+                    return engine
+        except ImportError:
+            pass
+
+        # Try faster-whisper first (better for CUDA), fall back to openai-whisper, then openai-api
         from .engine.faster_whisper_engine import FasterWhisperEngine
         engine = FasterWhisperEngine()
         if engine.is_available():
