@@ -6,7 +6,19 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git branch *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(conda env *)",
+      "Read(//c/Users/JonathanBaldwin.AzureAD/**)",
+      "Read(///wsl.localhost/Ubuntu//**)",
+      "Bash(wsl -d Ubuntu -- bash -lc 'conda env list 2>&1 | head -20')",
+      "Bash(wsl -d Ubuntu -- bash -lc 'source ~/miniforge3/etc/profile.d/conda.sh && conda env list')",
+      "Bash(wsl -d Ubuntu -- bash -lc 'source ~/miniforge3/etc/profile.d/conda.sh && conda env remove -n wispr-dragon -y && echo \"Old environment removed\"')",
+      "Bash(wsl -d Ubuntu -- bash -lc 'source ~/miniforge3/etc/profile.d/conda.sh && cd /home/jon/wispr-dragon && conda env create -f environment.yml && echo \"New environment created\"')",
+      "Bash(wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon && git status')",
+      "Bash(wsl -d *)"
+    ],
+    "additionalDirectories": [
+      "\\\\wsl.localhost\\Ubuntu\\home\\jon\\.claude\\projects\\--wsl-localhost-Ubuntu-home-jon-wispr-dragon\\memory"
     ]
   }
 }
