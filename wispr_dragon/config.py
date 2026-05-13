@@ -33,7 +33,7 @@ class AudioConfig:
 class EngineConfig:
     backend: str = "auto"  # "auto", "faster-whisper", "openai-whisper", "openai-api"
     model_size: str = "medium.en"
-    device: str = "auto"  # "auto", "cuda", "cpu" (ignored for openai-api)
+    device: str = "auto"  # "auto", "cuda", "rocm", "cpu" (ignored for openai-api)
     compute_type: str = "auto"  # "auto", "float16", "int8", "float32" (ignored for openai-api)
     language: str = "en"
     beam_size: int = 5

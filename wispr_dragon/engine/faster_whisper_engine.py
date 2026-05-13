@@ -36,7 +36,7 @@ class FasterWhisperEngine(TranscriptionEngine):
         if device == "auto":
             device = self._detect_device()
         if compute_type == "auto":
-            compute_type = "float16" if device == "cuda" else "int8"
+            compute_type = "float16" if device in ("cuda", "rocm") else "int8"
 
         logger.info(
             "Loading faster-whisper model=%s device=%s compute_type=%s",
@@ -98,6 +98,9 @@ class FasterWhisperEngine(TranscriptionEngine):
             import torch
             if torch.cuda.is_available():
                 return "cuda"
+            # Check for AMD ROCm support
+            if hasattr(torch.version, 'hip') and torch.version.hip:
+                return "rocm"
         except ImportError:
             pass
         return "cpu"
