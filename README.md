@@ -50,6 +50,38 @@ python scripts/test_audio.py
 # (Configure Windows-side audio capture server)
 ```
 
+### GPU Setup (Optional)
+
+For faster transcription, enable GPU acceleration:
+
+#### NVIDIA CUDA
+
+```bash
+# Install CUDA-enabled PyTorch
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# For faster-whisper
+pip install faster-whisper[cuda]
+```
+
+#### AMD ROCm
+
+```bash
+# Install ROCm-enabled PyTorch (Ubuntu)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.0
+
+# For faster-whisper, use community ROCm builds
+pip install faster-whisper  # May require manual ROCm CTranslate2
+```
+
+Set device in config:
+
+```yaml
+engine:
+  device: cuda  # or rocm, auto, cpu
+  compute_type: float16  # Use float16 for GPU acceleration
+```
+
 ## Usage
 
 ### Quick Start
