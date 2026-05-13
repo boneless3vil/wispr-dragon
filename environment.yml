@@ -1,4 +1,4 @@
-name: wispr-dragon
+name: wispr_dragon
 channels:
   - conda-forge
   - pytorch

@@ -1,0 +1,63 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"conda": true,
+			"true": true,
+			"/^wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon ; source /home/jon/miniforge3/etc/profile\\.d/conda\\.sh ; conda env list \\| grep \"wispr-dragon\" ; true'$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon ; cat scripts/test_audio\\.py ; echo \"---\" ; echo \"Running audio test\\.\\.\\.\" ; source /home/jon/miniforge3/etc/profile\\.d/conda\\.sh ; conda activate wispr-dragon ; python --version ; python scripts/test_audio\\.py'$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon && source /home/jon/miniforge3/etc/profile\\.d/conda\\.sh && conda activate wispr-dragon && python -c \"import sys; print\\(sys\\.executable\\); import importlib\\.util; print\\(importlib\\.util\\.find_spec\\(\\\\\"wispr_dragon\\\\\"\\)\\)\"'$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon ; source /home/jon/miniforge3/etc/profile\\.d/conda\\.sh ; conda activate wispr-dragon ; python -m wispr_dragon\\.main --help'$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"pip": true,
+			"git add": true,
+			"git commit": true,
+			"print(f'Current": true,
+			"f'Current": true,
+			"torch.cuda.current_device()": true,
+			"/^wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon && source /home/jon/miniforge3/etc/profile\\.d/conda\\.sh && conda activate wispr-dragon && python -c \"import torch; print\\(torch\\.__version__\\)\"'$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"/^wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon ; source /home/jon/miniforge3/etc/profile\\.d/conda\\.sh ; conda activate wispr-dragon ; python -c \"import torch; print\\(f'CUDA available: \\{torch\\.cuda\\.is_available\\(\\)\\}'\\); print\\(f'Device count: \\{torch\\.cuda\\.device_count\\(\\)\\}'\\); print\\(f'HIP: \\{hasattr\\(torch\\.version, \\\\\"hip\\\\\"\\) and torch\\.version\\.hip\\}'\\)\"'$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"torch.cuda.is_available()": true,
+			"torch.cuda.device_count()": true,
+			"hasattr(torch.version,": true,
+			"torch.version,": true,
+			"/^wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon ; source /home/jon/miniforge3/etc/profile\\.d/conda\\.sh ; conda activate wispr-dragon ; python -c \"import torch; print\\(torch\\.cuda\\.is_available\\(\\)\\); print\\(torch\\.cuda\\.device_count\\(\\)\\); print\\(hasattr\\(torch\\.version, \\\\\"hip\\\\\"\\) and torch\\.version\\.hip\\)\"'$/": {
+				"approve": true,
+				"matchCommandLine": true
+			},
+			"audio:": true,
+			"sample_rate:": true,
+			"channels:": true,
+			"source:": true,
+			"engine:": true,
+			"backend:": true,
+			"device:": true,
+			"compute_type:": true,
+			"correction:": true,
+			"fuzzy_match_score:": true,
+			"ui:": true,
+			"timeout": true
+		}
+	}
+}

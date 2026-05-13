@@ -28,11 +28,11 @@ A powerful speech recognition application for Linux/WSL2 with support for multip
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd wispr-dragon
+cd wispr_dragon
 
 # Create environment
 conda env create -f environment.yml
-conda activate wispr-dragon
+conda activate wispr_dragon
 
 # Install in development mode
 pip install -e .
@@ -91,7 +91,7 @@ engine:
 python -m wispr_dragon
 
 # Or use the main entry point
-wispr-dragon
+wispr_dragon
 ```
 
 ### Using OpenAI API Engine (GPT 5.5)
@@ -107,7 +107,7 @@ wispr-dragon
 
 #### Configuration
 
-Edit `~/.wispr-dragon/config.yaml`:
+Edit `~/.wispr_dragon/config.yaml`:
 
 ```yaml
 engine:
@@ -155,14 +155,14 @@ engine:
 ### Command Line Options
 
 ```bash
-wispr-dragon --help
+wispr_dragon --help
 
 # Examples:
-wispr-dragon --verbose                    # Debug output
-wispr-dragon --model large-v3             # Override model size
-wispr-dragon --device cuda                # Force GPU
-wispr-dragon --no-vad                     # Disable voice activity detection
-wispr-dragon --config /path/to/config.yaml
+wispr_dragon --verbose                    # Debug output
+wispr_dragon --model large-v3             # Override model size
+wispr_dragon --device cuda                # Force GPU
+wispr_dragon --no-vad                     # Disable voice activity detection
+wispr_dragon --config /path/to/config.yaml
 ```
 
 ## Testing
@@ -192,7 +192,7 @@ python scripts/test_integration.py
 ## Configuration
 
 ### Default Config Location
-`~/.wispr-dragon/config.yaml`
+`~/.wispr_dragon/config.yaml`
 
 ### Audio Configuration
 
@@ -236,7 +236,7 @@ correction:
 
 ### Command Mode (Default)
 
-Execute voice commands defined in `~/.wispr-dragon/commands.yaml`:
+Execute voice commands defined in `~/.wispr_dragon/commands.yaml`:
 
 ```yaml
 commands:

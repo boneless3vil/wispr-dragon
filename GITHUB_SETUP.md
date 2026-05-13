@@ -1,4 +1,4 @@
-# GitHub Setup Guide for Wispr Dragon
+# GitHub Setup Guide for Wispr_Dragon
 
 Your local repository is now fully initialized! Here's how to connect it to GitHub and publish your code.
 

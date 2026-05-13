@@ -9,7 +9,15 @@ from typing import Optional
 import yaml
 
 
-DEFAULT_USER_DIR = Path.home() / ".wispr-dragon"
+# New default path uses underscore
+DEFAULT_USER_DIR = Path.home() / ".wispr_dragon"
+# Fallback to old path for backward compatibility
+OLD_USER_DIR = Path.home() / ".wispr-dragon"
+
+# Use old path if it exists and new one doesn't
+if not DEFAULT_USER_DIR.exists() and OLD_USER_DIR.exists():
+    DEFAULT_USER_DIR = OLD_USER_DIR
+
 DEFAULT_CONFIG_PATH = DEFAULT_USER_DIR / "config.yaml"
 DEFAULT_DICTIONARY_PATH = DEFAULT_USER_DIR / "user_dictionary.json"
 DEFAULT_COMMANDS_PATH = DEFAULT_USER_DIR / "commands.yaml"

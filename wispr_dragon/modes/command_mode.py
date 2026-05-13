@@ -10,7 +10,7 @@ from rapidfuzz import fuzz
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_COMMANDS_PATH = Path.home() / ".wispr-dragon" / "commands.yaml"
+DEFAULT_COMMANDS_PATH = Path.home() / ".wispr_dragon" / "commands.yaml"
 BUILTIN_COMMANDS_PATH = Path(__file__).parent.parent.parent / "data" / "default_commands.yaml"
 
 _commands: list[dict] = []

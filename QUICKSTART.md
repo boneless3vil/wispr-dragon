@@ -1,12 +1,12 @@
-# Wispr Dragon Quick Start
+# Wispr_Dragon Quick Start
 
 ## 5-Minute Setup
 
 ### 1. Clone and Install
 ```bash
-cd wispr-dragon
+cd wispr_dragon
 conda env create -f environment.yml
-conda activate wispr-dragon
+conda activate wispr_dragon
 pip install -e .
 ```
 
@@ -17,7 +17,7 @@ python scripts/test_audio.py
 
 ### 3. Run
 ```bash
-wispr-dragon
+wispr_dragon
 ```
 
 ---
@@ -33,7 +33,7 @@ export OPENAI_API_KEY="sk-..."
 ```
 
 ### 3. Configure
-Create `~/.wispr-dragon/config.yaml`:
+Create `~/.wispr_dragon/config.yaml`:
 ```yaml
 engine:
   backend: openai-api
@@ -166,7 +166,7 @@ wispr-dragon/
    - Local: Fast, free, needs GPU
    - Cloud: Accurate, costs money, simple setup
 
-3. **[Configure](#using-openai-api-gpt-55-support)** `~/.wispr-dragon/config.yaml`
+3. **[Configure](#using-openai-api-gpt-55-support)** `~/.wispr_dragon/config.yaml`
 
 4. **[Run](#run)** and start using!
 

@@ -61,8 +61,8 @@ htmlcov/
 .hypothesis/
 
 # User Configuration
-~/.wispr-dragon/
-.wispr-dragon/
+~/.wispr_dragon/
+.wispr_dragon/
 
 # Large Model Files (git lfs should be used if tracking)
 *.pt

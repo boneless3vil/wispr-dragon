@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "wispr-dragon"
+name = "wispr_dragon"
 version = "0.1.0"
 description = "Local speech recognition with Dragon NaturallySpeaking-like features"
 requires-python = ">=3.11"
@@ -22,7 +22,7 @@ openai-api = ["openai>=1.0", "pydub>=0.25"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-wispr-dragon = "wispr_dragon.main:main"
+wispr_dragon = "wispr_dragon.main:main"
 
 [tool.setuptools.packages.find]
 include = ["wispr_dragon*"]

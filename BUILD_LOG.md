@@ -1,6 +1,6 @@
-# Wispr Dragon Build Log
+# Wispr_Dragon Build Log
 
-This document tracks all changes made to the Wispr Dragon application codebase.
+This document tracks all changes made to the Wispr_Dragon application codebase.
 
 ## Build History
 

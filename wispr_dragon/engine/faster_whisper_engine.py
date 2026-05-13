@@ -97,10 +97,7 @@ class FasterWhisperEngine(TranscriptionEngine):
         try:
             import torch
             if torch.cuda.is_available():
-                return "cuda"
-            # Check for AMD ROCm support
-            if hasattr(torch.version, 'hip') and torch.version.hip:
-                return "rocm"
+                return "cuda"  # faster-whisper uses CUDA API for both NVIDIA and AMD
         except ImportError:
             pass
         return "cpu"

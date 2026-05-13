@@ -1,6 +1,6 @@
-# START HERE - Wispr Dragon Quick Navigation
+# START HERE - Wispr_Dragon Quick Navigation
 
-Welcome! Your Wispr Dragon project is fully set up. This file helps you find what you need.
+Welcome! Your Wispr_Dragon project is fully set up. This file helps you find what you need.
 
 ## 🚀 I Want To... (Quick Links)
 
@@ -202,7 +202,7 @@ A: It's replaced by this new version. You have all the code here.
 
 ## ✨ Summary
 
-Your Wispr Dragon project is:
+Your Wispr_Dragon project is:
 - ✅ Fully set up with git
 - ✅ Protected with proper .gitignore
 - ✅ Organized with two branches
