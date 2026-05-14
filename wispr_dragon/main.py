@@ -204,6 +204,8 @@ def main():
         config.engine.model_size = args.model
     if args.device:
         config.engine.device = args.device
+    if args.dictation_only:
+        config.security.dictation_only = True
 
     # Initialize components
     dictionary = UserDictionary()
@@ -213,8 +215,9 @@ def main():
         fuzzy_threshold=config.correction.fuzzy_match_score,
         auto_apply_threshold=config.correction.auto_apply_threshold,
     )
-    mode_mgr = ModeManager()
     injector = TextInjector()
+    macro_runner = MacroRunner(config.user_dir, text_injector=injector)
+    mode_mgr = ModeManager(macro_runner=macro_runner)
 
     # Load command grammar
     from .modes.command_mode import load_commands
@@ -269,9 +272,45 @@ def main():
         except subprocess.TimeoutExpired:
             logger.error("Keystroke command timed out")
 
+    def handle_macro(text, args=None):
+        """Handler for voice-triggered macros."""
+        if not args or "macro" not in args:
+            return
+
+        macro = args["macro"]
+        captured_args = macro.pop("_captured_args", None)
+
+        # If in dictation mode, show confirmation dialog
+        if mode_mgr.mode == Mode.DICTATION and not config.security.dictation_only:
+            from .ui.confirm_command import ConfirmationDialog
+
+            dialog = ConfirmationDialog(config.user_dir)
+            action = macro.get("action", "unknown")
+            target = macro.get("program") or macro.get("script")
+
+            choice = dialog.show_and_ask(text, macro.get("trigger", ""), action, target)
+
+            if choice == "no":
+                # User wants to type it instead
+                return text
+            elif choice == "trust" and target:
+                # Add to trust list and execute
+                is_script = action == "python_script"
+                dialog.trust_manifest.add_trust(target, is_script=is_script)
+                return macro_runner.execute(macro, captured_args)
+            elif choice is None:
+                # User cancelled
+                return None
+            # choice == "yes": fall through to execute
+
+        success = macro_runner.execute(macro, captured_args)
+        logger.debug("Macro execution: %s", "success" if success else "failed")
+        return None
+
     mode_mgr.register_handler("undo_last", handle_undo)
     mode_mgr.register_handler("open_correction_window", handle_correction)
     mode_mgr.register_handler("keystroke", handle_keystroke)
+    mode_mgr.register_handler("macro", handle_macro)
 
     # Signal handling
     running = True
