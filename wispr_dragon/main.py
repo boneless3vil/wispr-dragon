@@ -1,11 +1,13 @@
 """Wispr-Dragon main entry point."""
 
 import argparse
+import getpass
 import logging
 import re
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -14,6 +16,8 @@ from .correction.dictionary import UserDictionary
 from .correction.hotwords import HotwordManager
 from .correction.post_processor import PostProcessor
 from .engine import create_engine
+from .macros.macro_runner import MacroRunner
+from .macros.security import SecurityPolicy
 from .modes.mode_manager import ModeManager, Mode
 from .output.text_injector import TextInjector
 
@@ -27,6 +31,104 @@ def setup_logging(verbose: bool = False) -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+
+
+def _handle_sign_script(script_name: str, user_dir) -> int:
+    """Sign a Python script."""
+    from pathlib import Path
+    scripts_dir = user_dir / "scripts"
+    script_path = scripts_dir / script_name
+
+    security = SecurityPolicy(user_dir)
+    if security.sign_script(script_path):
+        print(f"✓ Script signed: {script_name}")
+        return 0
+    else:
+        print(f"✗ Failed to sign script: {script_name}")
+        return 1
+
+
+def _handle_admin_lock(user_dir) -> int:
+    """Enable admin lock with password."""
+    import bcrypt
+    from pathlib import Path
+
+    password = getpass.getpass("Enter admin password: ")
+    confirm = getpass.getpass("Confirm password: ")
+
+    if password != confirm:
+        print("✗ Passwords do not match")
+        return 1
+
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+    policy = {
+        "allow_python_scripts": True,
+        "allow_yaml_macros": True,
+        "allow_program_launch": True,
+        "dictation_only": False,
+    }
+
+    security = SecurityPolicy(user_dir)
+    if security.set_admin_lock(password_hash, policy):
+        print("✓ Admin lock enabled")
+        return 0
+    else:
+        print("✗ Failed to set admin lock")
+        return 1
+
+
+def _handle_admin_unlock(user_dir) -> int:
+    """Disable admin lock."""
+    import bcrypt
+    from pathlib import Path
+
+    password = getpass.getpass("Enter admin password: ")
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+    security = SecurityPolicy(user_dir)
+    if security.remove_admin_lock(password_hash):
+        print("✓ Admin lock removed")
+        return 0
+    else:
+        print("✗ Admin password incorrect")
+        return 1
+
+
+def _handle_security_status(user_dir) -> int:
+    """Show current security policy."""
+    from pathlib import Path
+
+    security = SecurityPolicy(user_dir)
+    print("\n=== Wispr-Dragon Security Status ===\n")
+
+    if security.is_locked():
+        print("Status: LOCKED (password-protected)")
+    else:
+        print("Status: UNLOCKED")
+
+    print(f"\nPolicy Settings:")
+    print(f"  Allow Python scripts:    {security.allows_python_scripts()}")
+    print(f"  Allow YAML macros:       {security.allows_yaml_macros()}")
+    print(f"  Allow program launch:    {security.allows_program_launch()}")
+    print(f"  Dictation-only mode:     {security.is_dictation_only()}")
+    print()
+
+    return 0
+
+
+def _handle_clear_trust(user_dir) -> int:
+    """Clear trusted programs/scripts."""
+    from pathlib import Path
+
+    trust_file = user_dir / "trusted.json"
+    if trust_file.exists():
+        trust_file.unlink()
+        print("✓ Trusted programs/scripts cleared")
+        return 0
+    else:
+        print("✗ No trust manifest found")
+        return 1
 
 
 def _validate_keystroke(keys: str) -> bool:
@@ -66,7 +168,32 @@ def main():
     parser.add_argument("--model", type=str, help="Override model size (e.g., small.en, medium.en, large-v3)")
     parser.add_argument("--device", type=str, help="Override device (cuda, cpu)")
     parser.add_argument("--no-vad", action="store_true", help="Disable voice activity detection")
+    parser.add_argument("--dictation-only", action="store_true", help="Enable dictation-only mode (no macros)")
+
+    # Security admin commands
+    parser.add_argument("--sign-script", type=str, metavar="SCRIPT", help="Sign a Python script")
+    parser.add_argument("--admin-lock", action="store_true", help="Enable admin lock with password")
+    parser.add_argument("--admin-unlock", action="store_true", help="Disable admin lock (requires password)")
+    parser.add_argument("--security-status", action="store_true", help="Show current security policy")
+    parser.add_argument("--clear-trust", action="store_true", help="Clear trusted programs/scripts")
+
     args = parser.parse_args()
+
+    # Load config first
+    config = Config.load(Path(args.config) if args.config else None)
+    user_dir = config.user_dir
+
+    # Handle admin commands (exit after executing)
+    if args.sign_script:
+        return _handle_sign_script(args.sign_script, user_dir)
+    if args.admin_lock:
+        return _handle_admin_lock(user_dir)
+    if args.admin_unlock:
+        return _handle_admin_unlock(user_dir)
+    if args.security_status:
+        return _handle_security_status(user_dir)
+    if args.clear_trust:
+        return _handle_clear_trust(user_dir)
 
     setup_logging(args.verbose)
     logger.info("Wispr-Dragon starting...")

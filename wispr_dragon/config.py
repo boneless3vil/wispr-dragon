@@ -101,11 +101,20 @@ class UIConfig:
 
 
 @dataclass
+class SecurityConfig:
+    allow_python_scripts: bool = True
+    allow_yaml_macros: bool = True
+    allow_program_launch: bool = True
+    dictation_only: bool = False
+
+
+@dataclass
 class Config:
     audio: AudioConfig = field(default_factory=AudioConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
     correction: CorrectionConfig = field(default_factory=CorrectionConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
     user_dir: Path = DEFAULT_USER_DIR
 
     @classmethod
@@ -128,6 +137,8 @@ class Config:
             config.correction = CorrectionConfig(**data["correction"])
         if "ui" in data:
             config.ui = UIConfig(**data["ui"])
+        if "security" in data:
+            config.security = SecurityConfig(**data["security"])
         if "user_dir" in data:
             config.user_dir = Path(data["user_dir"])
         return config
@@ -169,6 +180,12 @@ class Config:
                 "correction_shortcut": self.ui.correction_shortcut,
                 "overlay_enabled": self.ui.overlay_enabled,
                 "theme": self.ui.theme,
+            },
+            "security": {
+                "allow_python_scripts": self.security.allow_python_scripts,
+                "allow_yaml_macros": self.security.allow_yaml_macros,
+                "allow_program_launch": self.security.allow_program_launch,
+                "dictation_only": self.security.dictation_only,
             },
             "user_dir": str(self.user_dir),
         }
