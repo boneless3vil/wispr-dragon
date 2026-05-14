@@ -36,6 +36,20 @@ class AudioConfig:
     network_host: str = "0.0.0.0"
     network_port: int = 9876
 
+    def __post_init__(self):
+        if not 0 <= self.vad_threshold <= 1:
+            raise ValueError(f"vad_threshold must be in [0,1], got {self.vad_threshold}")
+        if self.sample_rate <= 0:
+            raise ValueError(f"sample_rate must be > 0, got {self.sample_rate}")
+        if self.channels <= 0:
+            raise ValueError(f"channels must be > 0, got {self.channels}")
+        if self.silence_duration_ms < 0:
+            raise ValueError(f"silence_duration_ms must be >= 0, got {self.silence_duration_ms}")
+        if self.min_speech_duration_ms < 0:
+            raise ValueError(f"min_speech_duration_ms must be >= 0, got {self.min_speech_duration_ms}")
+        if self.network_port <= 0 or self.network_port > 65535:
+            raise ValueError(f"network_port must be in [1,65535], got {self.network_port}")
+
 
 @dataclass
 class EngineConfig:
@@ -48,6 +62,19 @@ class EngineConfig:
     initial_prompt: str = ""
     hotwords: str = ""
 
+    def __post_init__(self):
+        valid_backends = {"auto", "faster-whisper", "openai-whisper", "openai-api"}
+        if self.backend not in valid_backends:
+            raise ValueError(f"backend must be one of {valid_backends}, got {self.backend}")
+        valid_devices = {"auto", "cuda", "cpu"}
+        if self.device not in valid_devices:
+            raise ValueError(f"device must be one of {valid_devices}, got {self.device}")
+        valid_compute = {"auto", "float16", "int8", "float32"}
+        if self.compute_type not in valid_compute:
+            raise ValueError(f"compute_type must be one of {valid_compute}, got {self.compute_type}")
+        if self.beam_size < 1:
+            raise ValueError(f"beam_size must be >= 1, got {self.beam_size}")
+
 
 @dataclass
 class CorrectionConfig:
@@ -55,6 +82,14 @@ class CorrectionConfig:
     fuzzy_match_score: int = 85
     max_hotwords: int = 100
     save_audio_segments: bool = False
+
+    def __post_init__(self):
+        if not 0 <= self.fuzzy_match_score <= 100:
+            raise ValueError(f"fuzzy_match_score must be in [0,100], got {self.fuzzy_match_score}")
+        if self.auto_apply_threshold < 0:
+            raise ValueError(f"auto_apply_threshold must be >= 0, got {self.auto_apply_threshold}")
+        if self.max_hotwords < 0:
+            raise ValueError(f"max_hotwords must be >= 0, got {self.max_hotwords}")
 
 
 @dataclass

@@ -5,9 +5,6 @@ from pathlib import Path
 
 import pytest
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from wispr_dragon.modes.command_mode import match_command, load_commands
 
 

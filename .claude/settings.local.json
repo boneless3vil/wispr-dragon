@@ -15,7 +15,10 @@
       "Bash(wsl -d Ubuntu -- bash -lc 'source ~/miniforge3/etc/profile.d/conda.sh && conda env remove -n wispr-dragon -y && echo \"Old environment removed\"')",
       "Bash(wsl -d Ubuntu -- bash -lc 'source ~/miniforge3/etc/profile.d/conda.sh && cd /home/jon/wispr-dragon && conda env create -f environment.yml && echo \"New environment created\"')",
       "Bash(wsl -d Ubuntu -- bash -lc 'cd /home/jon/wispr-dragon && git status')",
-      "Bash(wsl -d *)"
+      "Bash(wsl -d *)",
+      "Bash(python3 -m py_compile wispr_dragon/**/*.py)",
+      "Bash(grep -n \"sys.path\" \\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\scripts\\\\\\\\*.py \\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\tests\\\\\\\\test_*.py)",
+      "Bash(grep -r \"sys.path.insert\" \\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\)"
     ],
     "additionalDirectories": [
       "\\\\wsl.localhost\\Ubuntu\\home\\jon\\.claude\\projects\\--wsl-localhost-Ubuntu-home-jon-wispr-dragon\\memory"

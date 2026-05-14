@@ -2,7 +2,9 @@
 
 import argparse
 import logging
+import re
 import signal
+import subprocess
 import sys
 
 import numpy as np
@@ -11,6 +13,7 @@ from .config import Config
 from .correction.dictionary import UserDictionary
 from .correction.hotwords import HotwordManager
 from .correction.post_processor import PostProcessor
+from .engine import create_engine
 from .modes.mode_manager import ModeManager, Mode
 from .output.text_injector import TextInjector
 
@@ -26,62 +29,16 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
-def create_engine(config: Config):
-    """Create the appropriate transcription engine based on config and availability."""
-    backend = config.engine.backend
+def _validate_keystroke(keys: str) -> bool:
+    """Validate keystroke string against whitelist.
 
-    if backend == "auto":
-        # Check for AMD GPU first - prefer openai-whisper for ROCm compatibility
-        try:
-            import torch
-            has_amd_gpu = hasattr(torch.version, 'hip') and torch.version.hip
-            if has_amd_gpu:
-                # AMD GPU detected - use openai-whisper for ROCm support
-                from .engine.openai_whisper_engine import OpenAIWhisperEngine
-                engine = OpenAIWhisperEngine()
-                if engine.is_available():
-                    logger.info("AMD GPU detected - using openai-whisper engine for ROCm support")
-                    return engine
-        except ImportError:
-            pass
+    Allowed: alphanumeric, +, -, _, and valid xdotool key names.
+    """
+    if not keys:
+        return False
+    return bool(re.match(r"^[a-zA-Z0-9+\-_]+$", keys))
 
-        # Try faster-whisper first (better for CUDA), fall back to openai-whisper, then openai-api
-        from .engine.faster_whisper_engine import FasterWhisperEngine
-        engine = FasterWhisperEngine()
-        if engine.is_available():
-            logger.info("Using faster-whisper engine")
-            return engine
 
-        from .engine.openai_whisper_engine import OpenAIWhisperEngine
-        engine = OpenAIWhisperEngine()
-        if engine.is_available():
-            logger.info("Using openai-whisper engine (fallback)")
-            return engine
-
-        from .engine.openai_api_engine import OpenAIAPIEngine
-        engine = OpenAIAPIEngine()
-        if engine.is_available():
-            logger.info("Using openai-api engine (fallback)")
-            return engine
-
-        logger.error("No transcription engine available. Install faster-whisper, openai-whisper, or set OPENAI_API_KEY.")
-        sys.exit(1)
-
-    elif backend == "faster-whisper":
-        from .engine.faster_whisper_engine import FasterWhisperEngine
-        return FasterWhisperEngine()
-
-    elif backend == "openai-whisper":
-        from .engine.openai_whisper_engine import OpenAIWhisperEngine
-        return OpenAIWhisperEngine()
-
-    elif backend == "openai-api":
-        from .engine.openai_api_engine import OpenAIAPIEngine
-        return OpenAIAPIEngine()
-
-    else:
-        logger.error("Unknown engine backend: %s", backend)
-        sys.exit(1)
 
 
 def create_audio_source(config: Config):
@@ -172,10 +129,18 @@ def main():
         window.show(text)
 
     def handle_keystroke(text, args=None):
-        import subprocess
         keys = args.get("keys", "") if args else ""
-        if keys:
+        if not keys:
+            return
+        if not _validate_keystroke(keys):
+            logger.error("Invalid keystroke pattern: %s", keys)
+            return
+        try:
             subprocess.run(["xdotool", "key", "--clearmodifiers", keys], timeout=2)
+        except FileNotFoundError:
+            logger.error("xdotool not found")
+        except subprocess.TimeoutExpired:
+            logger.error("Keystroke command timed out")
 
     mode_mgr.register_handler("undo_last", handle_undo)
     mode_mgr.register_handler("open_correction_window", handle_correction)

@@ -89,25 +89,13 @@ def test_with_microphone(engine_name: str, model_size: str, duration: int = 5):
 
 
 def _create_engine(name: str):
-    if name == "auto":
-        sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-        from wispr_dragon.engine.faster_whisper_engine import FasterWhisperEngine
-        engine = FasterWhisperEngine()
-        if engine.is_available():
-            return engine
-        from wispr_dragon.engine.openai_whisper_engine import OpenAIWhisperEngine
-        return OpenAIWhisperEngine()
-    elif name == "faster-whisper":
-        sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-        from wispr_dragon.engine.faster_whisper_engine import FasterWhisperEngine
-        return FasterWhisperEngine()
-    elif name == "openai-whisper":
-        sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-        from wispr_dragon.engine.openai_whisper_engine import OpenAIWhisperEngine
-        return OpenAIWhisperEngine()
-    else:
-        print(f"Unknown engine: {name}")
-        sys.exit(1)
+    from wispr_dragon.config import Config
+    from wispr_dragon.engine import create_engine
+
+    config = Config()
+    if name != "auto":
+        config.engine.backend = name
+    return create_engine(config)
 
 
 def main():
