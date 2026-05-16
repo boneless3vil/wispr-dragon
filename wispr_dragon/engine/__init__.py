@@ -12,6 +12,35 @@ from .base import TranscriptionEngine
 logger = logging.getLogger(__name__)
 
 
+def validate_engine_config(config) -> None:
+    """Validate that engine backend matches config settings.
+
+    Some engines ignore certain config options (e.g., openai-api ignores device/compute_type).
+    Warn if config has unused parameters.
+
+    Args:
+        config: Config object with engine settings
+
+    Raises:
+        ValueError: If configuration is invalid
+    """
+    backend = config.engine.backend
+
+    if backend == "openai-api":
+        if config.engine.device != "auto":
+            logger.warning(
+                "openai-api engine ignores 'device' config (set to '%s'). "
+                "This parameter only applies to local engines.",
+                config.engine.device
+            )
+        if config.engine.compute_type != "auto":
+            logger.warning(
+                "openai-api engine ignores 'compute_type' config (set to '%s'). "
+                "This parameter only applies to local engines.",
+                config.engine.compute_type
+            )
+
+
 def create_engine(config) -> TranscriptionEngine:
     """Create the appropriate transcription engine based on config and availability.
 
@@ -24,6 +53,7 @@ def create_engine(config) -> TranscriptionEngine:
     Raises:
         SystemExit: If no suitable engine is found
     """
+    validate_engine_config(config)
     backend = config.engine.backend
 
     if backend == "auto":

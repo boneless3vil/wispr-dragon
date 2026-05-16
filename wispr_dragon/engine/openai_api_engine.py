@@ -34,7 +34,7 @@ class OpenAIAPIEngine(TranscriptionEngine):
             import openai
             import os
             api_key = os.getenv("OPENAI_API_KEY")
-            return api_key is not None
+            return api_key is not None and api_key.startswith("sk-")
         except ImportError:
             return False
 
@@ -48,6 +48,12 @@ class OpenAIAPIEngine(TranscriptionEngine):
             raise RuntimeError(
                 "OPENAI_API_KEY environment variable not set. "
                 "Get an API key from https://platform.openai.com/account/api-keys"
+            )
+
+        if not api_key.startswith("sk-"):
+            raise ValueError(
+                f"Invalid OPENAI_API_KEY format: must start with 'sk-', got '{api_key[:5]}...'. "
+                "Check your API key at https://platform.openai.com/account/api-keys"
             )
 
         self._client = openai.OpenAI(api_key=api_key)

@@ -84,16 +84,29 @@ class TextInjector:
             print(text, end="", flush=True)
 
     def undo(self, text: str) -> None:
-        """Undo the last injected text by sending backspaces."""
+        """Undo the last injected text by sending backspaces.
+
+        Handles newlines specially - sends Delete key for newlines,
+        BackSpace for regular characters.
+        """
         if self._method in ("xdotool", "clipboard", "wl-clipboard"):
-            count = len(text)
-            if count == 0:
+            if not text:
                 return
+
             try:
-                subprocess.run(
-                    ["xdotool", "key", "--clearmodifiers",
-                     "--repeat", str(count), "BackSpace"],
-                    timeout=10,
-                )
+                newline_count = text.count('\n')
+                regular_count = len(text) - newline_count
+
+                keys = []
+                if regular_count > 0:
+                    keys.extend(["--repeat", str(regular_count), "BackSpace"])
+                if newline_count > 0:
+                    keys.extend(["--repeat", str(newline_count), "Delete"])
+
+                if keys:
+                    subprocess.run(
+                        ["xdotool", "key", "--clearmodifiers"] + keys,
+                        timeout=10,
+                    )
             except Exception as e:
                 logger.error("Undo failed: %s", e)

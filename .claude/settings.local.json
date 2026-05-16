@@ -29,7 +29,9 @@
       "Bash(python -m venv --version)",
       "Bash(pip list *)",
       "Bash(python -c \"import wispr_dragon; print\\(wispr_dragon.__file__\\)\")",
-      "Bash(python -c \"import wispr_dragon; print\\('Package installed:', wispr_dragon.__file__\\)\")"
+      "Bash(python -c \"import wispr_dragon; print\\('Package installed:', wispr_dragon.__file__\\)\")",
+      "Bash(grep -n \"load_model\\\\|create_engine\" \\\\\\\\wsl.localhost\\\\\\\\ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\wispr_dragon\\\\\\\\main.py)",
+      "Bash(cd \\\\\\\\wsl.localhost\\\\\\\\ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon)"
     ],
     "additionalDirectories": [
       "\\\\wsl.localhost\\Ubuntu\\home\\jon\\.claude\\projects\\--wsl-localhost-Ubuntu-home-jon-wispr-dragon\\memory"
