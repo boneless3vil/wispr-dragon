@@ -172,7 +172,7 @@ class ConfirmationDialog:
         layout.addWidget(title)
 
         # Info
-        info_text = f"Voice recognized:\n  "{command_text}"\n\nAction:\n  {action}"
+        info_text = f'Voice recognized:\n  "{command_text}"\n\nAction:\n  {action}'
         if target:
             info_text += f"\n  Target: {target}"
 
@@ -220,7 +220,7 @@ class ConfirmationDialog:
         print("\n" + "=" * 50)
         print("Wispr Dragon — Command Detected")
         print("=" * 50)
-        print(f"\nVoice: "{command_text}"")
+        print(f'\nVoice: "{command_text}"')
         print(f"Action: {action}")
         if target:
             print(f"Target: {target}")

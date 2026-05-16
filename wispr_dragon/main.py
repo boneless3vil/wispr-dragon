@@ -141,6 +141,59 @@ def _validate_keystroke(keys: str) -> bool:
     return bool(re.match(r"^[a-zA-Z0-9+\-_]+$", keys))
 
 
+def _handle_ui_mode(config: Config) -> int:
+    """Launch floating dictation box UI."""
+    try:
+        from .ui.ui_controller import UIController
+        from .correction.dictionary import UserDictionary
+        from .correction.post_processor import PostProcessor
+        from .output.text_injector import TextInjector
+
+        # Initialize components
+        logger.info("Starting UI mode...")
+        dictionary = UserDictionary()
+        post_processor = PostProcessor(
+            dictionary,
+            fuzzy_threshold=config.correction.fuzzy_match_score,
+            auto_apply_threshold=config.correction.auto_apply_threshold,
+        )
+        text_injector = TextInjector()
+
+        # Create engine
+        engine = create_engine(config)
+        logger.info("Loading model: %s", config.engine.model_size)
+        engine.load_model(
+            config.engine.model_size,
+            device=config.engine.device,
+            compute_type=config.engine.compute_type,
+        )
+        logger.info("Model loaded successfully")
+
+        # Create UI controller
+        controller = UIController(
+            config,
+            config.user_dir,
+            engine,
+            post_processor=post_processor,
+            text_injector=text_injector,
+        )
+
+        # Start UI (blocks until window closes)
+        if controller.start():
+            return 0
+        else:
+            logger.error("Failed to start UI")
+            return 1
+
+    except ImportError as e:
+        logger.error("PyQt6 not available: %s", e)
+        print("Install PyQt6 with: pip install PyQt6")
+        return 1
+    except Exception as e:
+        logger.error("UI mode failed: %s", e)
+        return 1
+
+
 
 
 def create_audio_source(config: Config):
@@ -177,6 +230,9 @@ def main():
     parser.add_argument("--security-status", action="store_true", help="Show current security policy")
     parser.add_argument("--clear-trust", action="store_true", help="Clear trusted programs/scripts")
 
+    # UI mode
+    parser.add_argument("--ui", action="store_true", help="Launch floating dictation box UI")
+
     args = parser.parse_args()
 
     # Load config first
@@ -196,6 +252,10 @@ def main():
         return _handle_clear_trust(user_dir)
 
     setup_logging(args.verbose)
+
+    # Handle UI mode (launches floating dictation box)
+    if args.ui:
+        return _handle_ui_mode(config)
     logger.info("Wispr-Dragon starting...")
 
     # Load config
