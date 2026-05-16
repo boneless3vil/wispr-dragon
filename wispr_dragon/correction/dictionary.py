@@ -51,6 +51,7 @@ class UserDictionary:
         }
         with open(self.path, "w") as f:
             json.dump(data, f, indent=2)
+        self.path.chmod(0o600)
 
     def add_correction(self, wrong: str, correct: str) -> None:
         """Record a correction from wrong text to correct text."""

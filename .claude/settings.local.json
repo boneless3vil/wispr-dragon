@@ -18,7 +18,18 @@
       "Bash(wsl -d *)",
       "Bash(python3 -m py_compile wispr_dragon/**/*.py)",
       "Bash(grep -n \"sys.path\" \\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\scripts\\\\\\\\*.py \\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\tests\\\\\\\\test_*.py)",
-      "Bash(grep -r \"sys.path.insert\" \\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\)"
+      "Bash(grep -r \"sys.path.insert\" \\\\\\\\wsl.localhost\\\\\\\\Ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\)",
+      "Bash(cd \"\\\\\\\\wsl.localhost\\\\ubuntu\\\\home\\\\jon\\\\wispr_dragon\")",
+      "Bash(python -m pytest tests/test_macro_runner.py -v)",
+      "Bash(pip install *)",
+      "Bash(python -m pytest tests/test_macro_runner.py::test_macro_runner_init -v)",
+      "Bash(wsl pwd *)",
+      "Bash(python -m pip install pytest pyyaml -q)",
+      "Bash(python -m pip install pytest pyyaml bcrypt -q)",
+      "Bash(python -m venv --version)",
+      "Bash(pip list *)",
+      "Bash(python -c \"import wispr_dragon; print\\(wispr_dragon.__file__\\)\")",
+      "Bash(python -c \"import wispr_dragon; print\\('Package installed:', wispr_dragon.__file__\\)\")"
     ],
     "additionalDirectories": [
       "\\\\wsl.localhost\\Ubuntu\\home\\jon\\.claude\\projects\\--wsl-localhost-Ubuntu-home-jon-wispr-dragon\\memory"

@@ -37,9 +37,11 @@ class SecurityPolicy:
         """Check if Python scripts are allowed."""
         # Layer 2 (lock) overrides Layer 1 (config)
         if self.lock_file.exists():
-            lock_policy = self._load_lock()
-            if lock_policy and "allow_python_scripts" in lock_policy:
-                return lock_policy["allow_python_scripts"]
+            lock_data = self._load_lock()
+            if lock_data:
+                policy = lock_data.get("policy", {})
+                if "allow_python_scripts" in policy:
+                    return policy["allow_python_scripts"]
 
         # Default to Layer 1 (config)
         return self._get_config_setting("security", {}).get("allow_python_scripts", True)
@@ -47,27 +49,33 @@ class SecurityPolicy:
     def allows_yaml_macros(self) -> bool:
         """Check if YAML macros are allowed."""
         if self.lock_file.exists():
-            lock_policy = self._load_lock()
-            if lock_policy and "allow_yaml_macros" in lock_policy:
-                return lock_policy["allow_yaml_macros"]
+            lock_data = self._load_lock()
+            if lock_data:
+                policy = lock_data.get("policy", {})
+                if "allow_yaml_macros" in policy:
+                    return policy["allow_yaml_macros"]
 
         return self._get_config_setting("security", {}).get("allow_yaml_macros", True)
 
     def allows_program_launch(self) -> bool:
         """Check if program launching is allowed."""
         if self.lock_file.exists():
-            lock_policy = self._load_lock()
-            if lock_policy and "allow_program_launch" in lock_policy:
-                return lock_policy["allow_program_launch"]
+            lock_data = self._load_lock()
+            if lock_data:
+                policy = lock_data.get("policy", {})
+                if "allow_program_launch" in policy:
+                    return policy["allow_program_launch"]
 
         return self._get_config_setting("security", {}).get("allow_program_launch", True)
 
     def is_dictation_only(self) -> bool:
         """Check if only dictation is allowed (no commands/macros)."""
         if self.lock_file.exists():
-            lock_policy = self._load_lock()
-            if lock_policy and "dictation_only" in lock_policy:
-                return lock_policy["dictation_only"]
+            lock_data = self._load_lock()
+            if lock_data:
+                policy = lock_data.get("policy", {})
+                if "dictation_only" in policy:
+                    return policy["dictation_only"]
 
         return self._get_config_setting("security", {}).get("dictation_only", False)
 
@@ -226,7 +234,7 @@ class SecurityPolicy:
         try:
             with open(self.lock_file) as f:
                 data = json.load(f)
-            self._lock_cache = data.get("policy", {})
+            self._lock_cache = data
             return self._lock_cache
         except Exception as e:
             logger.error("Failed to load lock file: %s", e)

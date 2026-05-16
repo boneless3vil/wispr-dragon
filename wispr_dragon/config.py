@@ -191,3 +191,4 @@ class Config:
         }
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        path.chmod(0o600)
