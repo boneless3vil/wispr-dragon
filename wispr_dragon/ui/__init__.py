@@ -6,6 +6,9 @@ from .dictation_box import DictationBox
 from .audio_worker import AudioWorker
 from .transcription_worker import TranscriptionWorker
 from .ui_controller import UIController
+from .system_tray import SystemTray
+from .settings_dialog import SettingsDialog
+from .macro_editor import MacroEditor
 
 __all__ = [
     "ConfirmationDialog",
@@ -15,4 +18,7 @@ __all__ = [
     "AudioWorker",
     "TranscriptionWorker",
     "UIController",
+    "SystemTray",
+    "SettingsDialog",
+    "MacroEditor",
 ]

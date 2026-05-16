@@ -31,7 +31,19 @@
       "Bash(python -c \"import wispr_dragon; print\\(wispr_dragon.__file__\\)\")",
       "Bash(python -c \"import wispr_dragon; print\\('Package installed:', wispr_dragon.__file__\\)\")",
       "Bash(grep -n \"load_model\\\\|create_engine\" \\\\\\\\wsl.localhost\\\\\\\\ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon\\\\\\\\wispr_dragon\\\\\\\\main.py)",
-      "Bash(cd \\\\\\\\wsl.localhost\\\\\\\\ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon)"
+      "Bash(cd \\\\\\\\wsl.localhost\\\\\\\\ubuntu\\\\\\\\home\\\\\\\\jon\\\\\\\\wispr_dragon)",
+      "Bash(git push *)",
+      "Bash(gh pr create --title 'v1.0: Complete macro system, security, and comprehensive tests' --body ' *)",
+      "Bash(python.exe -m pytest C:\\\\Users\\\\JonathanBaldwin.AzureAD\\\\AppData\\\\Local\\\\Temp\\\\wsl.localhost\\\\ubuntu\\\\home\\\\jon\\\\wispr_dragon\\\\tests\\\\test_config_validation.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_config_validation.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_ui_components.py -v --tb=short)",
+      "Bash(python -m pip install numpy --quiet)",
+      "Bash(python -m pytest tests/ -v --tb=line)",
+      "Read(//mnt/wsl.localhost/ubuntu/home/jon/**)",
+      "Bash(python -m wispr_dragon --ui --verbose)",
+      "Read(//root/**)",
+      "Bash(python -m pytest tests/test_ui_extensions.py -v)",
+      "Bash(python -m pytest tests/ -v --tb=short)"
     ],
     "additionalDirectories": [
       "\\\\wsl.localhost\\Ubuntu\\home\\jon\\.claude\\projects\\--wsl-localhost-Ubuntu-home-jon-wispr-dragon\\memory"
