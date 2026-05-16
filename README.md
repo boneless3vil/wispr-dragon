@@ -20,22 +20,43 @@ A powerful speech recognition application for Linux/WSL2 with support for multip
 
 ### Prerequisites
 
-- Python 3.9+
-- CUDA/ROCm (optional, for GPU acceleration)
+- **Python 3.11+**
+- **Microphone** for audio input (physical, USB, or network)
+- **CUDA/ROCm** (optional, for GPU acceleration with faster-whisper)
 
-### Setup
+### Option 1: PyPI Install (Recommended for Users)
+
+```bash
+# CLI only (minimal dependencies)
+pip install wispr_dragon
+
+# With GUI (floating dictation box)
+pip install wispr_dragon[gui]
+
+# With optional transcription engines
+pip install wispr_dragon[gui,openai-api,whisper-fallback]
+
+# Then run
+wispr_dragon --help
+wispr_dragon --ui  # Launch floating dictation box
+```
+
+### Option 2: Development Install (For Contributors)
 
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/yourusername/wispr_dragon.git
 cd wispr_dragon
 
-# Create environment
-conda env create -f environment.yml
-conda activate wispr_dragon
+# Create environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install in development mode
-pip install -e .
+# Install in development mode with all extras
+pip install -e ".[gui,dev,openai-api,whisper-fallback]"
+
+# Run tests
+pytest tests/ -v
 ```
 
 ### Audio Setup (WSL2)
