@@ -23,6 +23,8 @@ dependencies = [
 gui = ["PyQt6>=6.7"]
 whisper-fallback = ["openai-whisper>=20240930"]
 openai-api = ["openai>=1.0", "pydub>=0.25"]
+server = ["websockets>=12.0"]
+client = ["websockets>=12.0", "pystray>=0.19", "Pillow>=10.0"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0"]
 
 [project.urls]

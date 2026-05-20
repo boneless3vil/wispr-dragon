@@ -109,12 +109,30 @@ class SecurityConfig:
 
 
 @dataclass
+class ServerConfig:
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8765
+    api_key: str = ""
+    tls_cert: str = ""
+    tls_key: str = ""
+    max_connections: int = 1
+
+    def __post_init__(self):
+        if self.port <= 0 or self.port > 65535:
+            raise ValueError(f"port must be in [1,65535], got {self.port}")
+        if self.max_connections < 1:
+            raise ValueError(f"max_connections must be >= 1, got {self.max_connections}")
+
+
+@dataclass
 class Config:
     audio: AudioConfig = field(default_factory=AudioConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
     correction: CorrectionConfig = field(default_factory=CorrectionConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
     user_dir: Path = DEFAULT_USER_DIR
 
     @classmethod
@@ -139,6 +157,8 @@ class Config:
             config.ui = UIConfig(**data["ui"])
         if "security" in data:
             config.security = SecurityConfig(**data["security"])
+        if "server" in data:
+            config.server = ServerConfig(**data["server"])
         if "user_dir" in data:
             config.user_dir = Path(data["user_dir"])
         return config
@@ -186,6 +206,15 @@ class Config:
                 "allow_yaml_macros": self.security.allow_yaml_macros,
                 "allow_program_launch": self.security.allow_program_launch,
                 "dictation_only": self.security.dictation_only,
+            },
+            "server": {
+                "enabled": self.server.enabled,
+                "host": self.server.host,
+                "port": self.server.port,
+                "api_key": self.server.api_key,
+                "tls_cert": self.server.tls_cert,
+                "tls_key": self.server.tls_key,
+                "max_connections": self.server.max_connections,
             },
             "user_dir": str(self.user_dir),
         }
