@@ -4,25 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wispr_dragon"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local speech recognition with Dragon NaturallySpeaking-like features"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Jonathan Baldwin", email = "bonelessevil@gmail.com"}]
 requires-python = ">=3.11"
 dependencies = [
     "faster-whisper>=1.1.0",
     "sounddevice>=0.5",
-    "numpy",
-    "PyQt6>=6.7",
+    "numpy>=1.24.0",
     "rapidfuzz>=3.0",
-    "pyyaml",
+    "pyyaml>=6.0",
+    "bcrypt>=4.0",
 ]
 
 [project.optional-dependencies]
+gui = ["PyQt6>=6.7"]
 whisper-fallback = ["openai-whisper>=20240930"]
 openai-api = ["openai>=1.0", "pydub>=0.25"]
-dev = ["pytest>=7.0"]
+server = ["websockets>=12.0"]
+client = ["websockets>=12.0", "pystray>=0.19", "Pillow>=10.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/wispr_dragon"
+Documentation = "https://github.com/yourusername/wispr_dragon/blob/main/README.md"
+Repository = "https://github.com/yourusername/wispr_dragon.git"
+Issues = "https://github.com/yourusername/wispr_dragon/issues"
 
 [project.scripts]
 wispr_dragon = "wispr_dragon.main:main"
 
 [tool.setuptools.packages.find]
 include = ["wispr_dragon*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

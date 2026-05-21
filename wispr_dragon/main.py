@@ -1,6 +1,7 @@
 """Wispr-Dragon main entry point."""
 
 import argparse
+import asyncio
 import getpass
 import logging
 import re
@@ -141,6 +142,48 @@ def _validate_keystroke(keys: str) -> bool:
     return bool(re.match(r"^[a-zA-Z0-9+\-_]+$", keys))
 
 
+def _handle_server_mode(config: Config, print_key: bool = False) -> int:
+    """Launch WebSocket server for speech-to-text service."""
+    try:
+        from wispr_dragon.server.pipeline_runner import PipelineRunner
+        from wispr_dragon.server.websocket_server import WebSocketServer
+
+        if print_key:
+            if config.server.api_key:
+                print(f"API Key: {config.server.api_key}")
+            else:
+                import secrets
+                key = secrets.token_hex(16)
+                config.server.api_key = key
+                config.save()
+                print(f"Generated API Key: {key}")
+            return 0
+
+        logger.info("Starting server mode...")
+
+        pipeline = PipelineRunner(config)
+        if not pipeline.load(vad_enabled=True):
+            logger.error("Failed to load pipeline")
+            return 1
+
+        server = WebSocketServer(config, pipeline)
+
+        try:
+            asyncio.run(server.start())
+            return 0
+        except KeyboardInterrupt:
+            logger.info("Server stopped")
+            return 0
+
+    except ImportError as e:
+        logger.error("WebSocket dependencies not available: %s", e)
+        print("Install websockets: pip install websockets")
+        return 1
+    except Exception as e:
+        logger.error("Server mode failed: %s", e)
+        return 1
+
+
 def _handle_ui_mode(config: Config, inject_method: str = "auto") -> int:
     """Launch floating dictation box UI."""
     try:
@@ -255,6 +298,10 @@ def main():
     parser.add_argument("--security-status", action="store_true", help="Show current security policy")
     parser.add_argument("--clear-trust", action="store_true", help="Clear trusted programs/scripts")
 
+    # Server mode
+    parser.add_argument("--server", action="store_true", help="Run as WebSocket server for remote clients")
+    parser.add_argument("--print-key", action="store_true", help="Print API key and exit")
+
     # UI mode
     parser.add_argument("--ui", action="store_true", help="Launch floating dictation box UI")
 
@@ -290,7 +337,7 @@ def main():
 
     setup_logging(args.verbose)
 
-    # Apply CLI overrides before either mode dispatches
+    # Apply CLI overrides before any mode dispatches so --server and --ui honor them
     if args.model:
         config.engine.model_size = args.model
     if args.device:
@@ -301,6 +348,10 @@ def main():
         config.engine.beam_size = args.beam_size
     if args.dictation_only:
         config.security.dictation_only = True
+
+    # Handle server mode
+    if args.server:
+        return _handle_server_mode(config, print_key=args.print_key)
 
     # Handle UI mode (launches floating dictation box)
     if args.ui:
