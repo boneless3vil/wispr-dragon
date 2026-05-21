@@ -8,19 +8,16 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QHBoxLayout, QLabel, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+)
+
 logger = logging.getLogger(__name__)
 
 
-def _check_pyqt6():
-    """Check if PyQt6 is available."""
-    try:
-        from PyQt6.QtWidgets import QApplication
-        return True
-    except ImportError:
-        return False
-
-
-class DictationBox:
+class DictationBox(QObject):
     """Main window for voice dictation.
 
     Features:
@@ -32,6 +29,11 @@ class DictationBox:
     - Audio and transcription on separate threads
     """
 
+    # Cross-thread signals: worker threads emit these; the connected slots run on
+    # the GUI thread (queued connection) so widget mutation is thread-safe.
+    transcription_updated = pyqtSignal(str, str)  # live, final (empty string = no final)
+    status_message_changed = pyqtSignal(str)
+
     def __init__(self, config, user_dir: Path, on_text_ready=None, parent=None):
         """Initialize dictation box.
 
@@ -41,17 +43,7 @@ class DictationBox:
             on_text_ready: Callback when text is ready to post (receives text)
             parent: Parent widget (usually None for top-level window)
         """
-        if not _check_pyqt6():
-            logger.error("PyQt6 not available. Install with: pip install PyQt6")
-            raise ImportError("PyQt6 is required for UI mode")
-
-        from PyQt6.QtWidgets import (
-            QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-            QTextEdit, QPushButton, QLabel, QStatusBar
-        )
-        from PyQt6.QtCore import Qt, QSize
-        from PyQt6.QtGui import QFont
-
+        super().__init__()
         self.config = config
         self.user_dir = user_dir
         self.on_text_ready = on_text_ready
@@ -113,10 +105,21 @@ class DictationBox:
         # Keyboard shortcuts
         self.window.keyPressEvent = self._on_key_press
 
+        # Route worker-thread emits through Qt's queued connection so all widget
+        # mutation happens on the GUI thread.
+        self.transcription_updated.connect(self._apply_transcription_update)
+        self.status_message_changed.connect(self._apply_status_message)
+
+    def show_status(self, msg: str) -> None:
+        """Thread-safe status bar update — callable from any thread."""
+        self.status_message_changed.emit(msg)
+
+    @pyqtSlot(str)
+    def _apply_status_message(self, msg: str) -> None:
+        self.status_bar.showMessage(msg)
+
     def _on_key_press(self, event):
         """Handle keyboard shortcuts."""
-        from PyQt6.QtCore import Qt
-
         if event.key() == Qt.Key.Key_Return:
             self.post_text()
         elif event.key() == Qt.Key.Key_Escape:
@@ -126,25 +129,42 @@ class DictationBox:
         else:
             event.ignore()
 
-    def update_transcription(self, live: str, final: str = None):
-        """Update the transcription display.
+    def update_transcription(self, live: str, final: Optional[str] = None):
+        """Thread-safe entry point — emits a signal that runs on the GUI thread.
 
         Args:
             live: Current live transcription (hypothesis)
             final: Final transcription (if segment completed)
         """
+        self.transcription_updated.emit(live or "", final or "")
+
+    @pyqtSlot(str, str)
+    def _apply_transcription_update(self, live: str, final: str):
+        """Slot — runs on the GUI thread regardless of emitter thread."""
+        import html
+
         if final:
-            self.final_text = final
+            logger.info("Slot received final: %r (total len %d)", final[:80], len(self.final_text) + len(final))
+            # Each `final` carries one completed VAD segment. Append to the
+            # running transcript so multi-segment dictation accumulates.
+            if self.final_text:
+                self.final_text = f"{self.final_text} {final}"
+            else:
+                self.final_text = final
             self.live_text = ""
         else:
             self.live_text = live
 
-        # Display format: final text + grayed live text
-        display = self.final_text
+        # Display format: final text + grayed live text. Escape user content so
+        # transcribed angle brackets etc. render literally rather than as tags.
+        display = html.escape(self.final_text).replace("\n", "<br>")
         if self.live_text:
-            display += f"\n\n<i style='color: gray;'>{self.live_text}</i>"
+            display += (
+                f"<br><br><i style='color: gray;'>"
+                f"{html.escape(self.live_text)}</i>"
+            )
 
-        self.text_display.setText(display)
+        self.text_display.setHtml(display)
         self.status_bar.showMessage(f"Recording... ({len(self.final_text)} chars)")
 
     def post_text(self):

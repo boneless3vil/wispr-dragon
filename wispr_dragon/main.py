@@ -141,15 +141,18 @@ def _validate_keystroke(keys: str) -> bool:
     return bool(re.match(r"^[a-zA-Z0-9+\-_]+$", keys))
 
 
-def _handle_ui_mode(config: Config) -> int:
+def _handle_ui_mode(config: Config, inject_method: str = "auto") -> int:
     """Launch floating dictation box UI."""
     try:
+        from PyQt6.QtWidgets import QApplication
+
         from .ui.ui_controller import UIController
         from .correction.dictionary import UserDictionary
         from .correction.post_processor import PostProcessor
         from .output.text_injector import TextInjector
 
-        # Initialize components
+        app = QApplication.instance() or QApplication(sys.argv)
+
         logger.info("Starting UI mode...")
         dictionary = UserDictionary()
         post_processor = PostProcessor(
@@ -157,9 +160,9 @@ def _handle_ui_mode(config: Config) -> int:
             fuzzy_threshold=config.correction.fuzzy_match_score,
             auto_apply_threshold=config.correction.auto_apply_threshold,
         )
-        text_injector = TextInjector()
+        text_injector = TextInjector(method=inject_method)
+        logger.info("Text injection method: %s", text_injector._method)
 
-        # Create engine
         engine = create_engine(config)
         logger.info("Loading model: %s", config.engine.model_size)
         engine.load_model(
@@ -169,25 +172,37 @@ def _handle_ui_mode(config: Config) -> int:
         )
         logger.info("Model loaded successfully")
 
-        # Create UI controller
+        # Load VAD so the worker can segment speech rather than re-transcribing
+        # a growing buffer every 100ms.
+        from .audio.vad import VoiceActivityDetector
+        vad = VoiceActivityDetector(
+            sample_rate=config.audio.sample_rate,
+            threshold=config.audio.vad_threshold,
+            silence_duration_ms=config.audio.silence_duration_ms,
+            min_speech_duration_ms=config.audio.min_speech_duration_ms,
+        )
+        vad.load()
+        logger.info("VAD loaded")
+
         controller = UIController(
             config,
             config.user_dir,
             engine,
+            vad=vad,
             post_processor=post_processor,
             text_injector=text_injector,
         )
 
-        # Start UI (blocks until window closes)
-        if controller.start():
-            return 0
-        else:
+        if not controller.start():
             logger.error("Failed to start UI")
             return 1
 
+        exit_code = app.exec()
+        controller.stop()
+        return exit_code
+
     except ImportError as e:
         logger.error("PyQt6 not available: %s", e)
-        print("Install PyQt6 with: pip install PyQt6")
         return 1
     except Exception as e:
         logger.error("UI mode failed: %s", e)
@@ -220,6 +235,16 @@ def main():
     parser.add_argument("--config", type=str, help="Path to config file")
     parser.add_argument("--model", type=str, help="Override model size (e.g., small.en, medium.en, large-v3)")
     parser.add_argument("--device", type=str, help="Override device (cuda, cpu)")
+    parser.add_argument(
+        "--compute-type",
+        choices=["auto", "float16", "int8", "int8_float16", "bfloat16", "float32"],
+        help="Override compute type. int8_float16 halves VRAM use vs float16 — try it if a larger model thrashes.",
+    )
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        help="Override beam size. Higher = more accurate but slower (default 10).",
+    )
     parser.add_argument("--no-vad", action="store_true", help="Disable voice activity detection")
     parser.add_argument("--dictation-only", action="store_true", help="Enable dictation-only mode (no macros)")
 
@@ -232,6 +257,18 @@ def main():
 
     # UI mode
     parser.add_argument("--ui", action="store_true", help="Launch floating dictation box UI")
+
+    # Text injection backend (auto-detected by default)
+    parser.add_argument(
+        "--inject-method",
+        choices=["auto", "xdotool", "clipboard", "wl-clipboard", "clip.exe", "print"],
+        default="auto",
+        help=(
+            "Override text injection backend. 'xdotool' types into the focused X11/WSLg "
+            "window (Linux apps). 'clip.exe' copies to the Windows clipboard via WSL "
+            "interop (you press Ctrl+V to paste into a Windows app)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -253,19 +290,22 @@ def main():
 
     setup_logging(args.verbose)
 
-    # Handle UI mode (launches floating dictation box)
-    if args.ui:
-        return _handle_ui_mode(config)
-    logger.info("Wispr-Dragon starting...")
-
-    # Load config
-    config = Config.load()
+    # Apply CLI overrides before either mode dispatches
     if args.model:
         config.engine.model_size = args.model
     if args.device:
         config.engine.device = args.device
+    if args.compute_type:
+        config.engine.compute_type = args.compute_type
+    if args.beam_size:
+        config.engine.beam_size = args.beam_size
     if args.dictation_only:
         config.security.dictation_only = True
+
+    # Handle UI mode (launches floating dictation box)
+    if args.ui:
+        return _handle_ui_mode(config, inject_method=args.inject_method)
+    logger.info("Wispr-Dragon starting...")
 
     # Initialize components
     dictionary = UserDictionary()
@@ -275,7 +315,8 @@ def main():
         fuzzy_threshold=config.correction.fuzzy_match_score,
         auto_apply_threshold=config.correction.auto_apply_threshold,
     )
-    injector = TextInjector()
+    injector = TextInjector(method=args.inject_method)
+    logger.info("Text injection method: %s", injector._method)
     macro_runner = MacroRunner(config.user_dir, text_injector=injector)
     mode_mgr = ModeManager(macro_runner=macro_runner)
 

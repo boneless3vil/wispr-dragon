@@ -54,11 +54,11 @@ class AudioConfig:
 @dataclass
 class EngineConfig:
     backend: str = "auto"  # "auto", "faster-whisper", "openai-whisper", "openai-api"
-    model_size: str = "medium.en"
+    model_size: str = "small.en"
     device: str = "auto"  # "auto", "cuda", "cpu" (cuda works for both NVIDIA and AMD)
-    compute_type: str = "auto"  # "auto", "float16", "int8", "float32" (ignored for openai-api)
+    compute_type: str = "auto"  # "auto", "float16", "int8", "int8_float16", "bfloat16", "float32"
     language: str = "en"
-    beam_size: int = 5
+    beam_size: int = 10
     initial_prompt: str = ""
     hotwords: str = ""
 
@@ -69,7 +69,7 @@ class EngineConfig:
         valid_devices = {"auto", "cuda", "cpu"}
         if self.device not in valid_devices:
             raise ValueError(f"device must be one of {valid_devices}, got {self.device}")
-        valid_compute = {"auto", "float16", "int8", "float32"}
+        valid_compute = {"auto", "float16", "int8", "int8_float16", "bfloat16", "float32"}
         if self.compute_type not in valid_compute:
             raise ValueError(f"compute_type must be one of {valid_compute}, got {self.compute_type}")
         if self.beam_size < 1:

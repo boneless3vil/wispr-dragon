@@ -7,9 +7,9 @@ logger = logging.getLogger(__name__)
 
 
 class AudioWorker:
-    """Captures audio from microphone in a thread-safe manner.
+    """Captures audio from microphone and emits chunks via callback.
 
-    Emits audio chunks via callback, handles VAD segmentation.
+    Segmentation is handled downstream by the TranscriptionWorker.
     Designed to run in a separate thread.
     """
 
@@ -26,23 +26,16 @@ class AudioWorker:
         self.on_error = on_error
         self.is_running = False
         self.audio_stream = None
-        self.vad = None
 
     def setup(self) -> bool:
-        """Initialize audio capture and VAD.
+        """Verify audio dependencies and microphone access.
 
         Returns:
             True on success, False on error
         """
         try:
             import sounddevice as sd
-            import numpy as np
-            from silero_vad import load_silero_vad
 
-            # Initialize VAD
-            self.vad = load_silero_vad()
-
-            # Verify we can access microphone
             devices = sd.query_devices()
             if not devices:
                 raise RuntimeError("No audio devices found")
@@ -56,7 +49,7 @@ class AudioWorker:
             return True
 
         except ImportError as e:
-            msg = f"Missing audio dependencies: {e}. Install: pip install sounddevice silero-vad"
+            msg = f"Missing audio dependencies: {e}. Install: pip install sounddevice"
             logger.error(msg)
             if self.on_error:
                 self.on_error(msg)
@@ -136,4 +129,3 @@ class AudioWorker:
     def cleanup(self):
         """Clean up resources."""
         self.stop_recording()
-        self.vad = None

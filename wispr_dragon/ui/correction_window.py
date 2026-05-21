@@ -128,13 +128,12 @@ class CorrectionWindow:
         if dialog.exec() == QDialog.DialogCode.Accepted and result["text"]:
             corrected = result["text"]
             if corrected != original_text:
-                if result["always"]:
-                    # Set frequency high to auto-apply
-                    for _ in range(self.dictionary.correction.auto_apply_threshold
-                                   if hasattr(self.dictionary, 'correction')
-                                   else 3):
-                        self.dictionary.add_correction(original_text, corrected)
-                else:
+                # "Always apply" bumps the frequency past the auto-apply threshold so
+                # the correction triggers without confirmation next time. UserDictionary
+                # tracks this via repeated add_correction calls; 3 matches the
+                # default auto_apply_threshold in config.
+                repeats = 3 if result["always"] else 1
+                for _ in range(repeats):
                     self.dictionary.add_correction(original_text, corrected)
                 if self.on_correction:
                     self.on_correction(original_text, corrected)

@@ -19,19 +19,23 @@ class UIController:
     - Command matching and confirmation dialogs
     """
 
-    def __init__(self, config, user_dir: Path, engine, post_processor=None, text_injector=None):
+    def __init__(self, config, user_dir: Path, engine, vad=None, post_processor=None, text_injector=None):
         """Initialize UI controller.
 
         Args:
             config: Config object
             user_dir: User config directory (~/.wispr_dragon)
-            engine: TranscriptionEngine instance
+            engine: TranscriptionEngine instance (already loaded)
+            vad: VoiceActivityDetector instance (already loaded). Required for
+                segmented transcription — without it the worker has no way to
+                decide when to call the engine.
             post_processor: PostProcessor for text correction (optional)
             text_injector: TextInjector for posting text (optional)
         """
         self.config = config
         self.user_dir = user_dir
         self.engine = engine
+        self.vad = vad
         self.post_processor = post_processor
         self.text_injector = text_injector
 
@@ -62,9 +66,12 @@ class UIController:
 
             self.transcription_worker = TranscriptionWorker(
                 self.engine,
+                vad=self.vad,
                 post_processor=self.post_processor,
                 on_transcription=self._on_transcription,
                 on_error=self._on_error,
+                language=self.config.engine.language,
+                beam_size=self.config.engine.beam_size,
             )
 
             # Create UI
@@ -110,7 +117,7 @@ class UIController:
             )
             self.transcription_thread.start()
 
-            # Show UI (blocks until window closes)
+            # Show UI (non-blocking — caller drives the Qt event loop via app.exec())
             self.dictation_box.show()
             logger.info("Dictation session started")
             return True
@@ -135,6 +142,7 @@ class UIController:
             self.audio_worker.cleanup()
 
         if self.transcription_worker:
+            self.transcription_worker.stop()
             self.transcription_worker.reset()
 
         # Wait for threads
@@ -156,20 +164,26 @@ class UIController:
         except Exception as e:
             logger.error("Audio thread error: %s", e)
             if self.dictation_box:
-                self.dictation_box.status_bar.showMessage(f"Error: {e}")
+                self.dictation_box.show_status(f"Error: {e}")
 
     def _transcription_thread_main(self):
-        """Run transcription in separate thread."""
+        """Drive the transcription worker loop in a dedicated thread."""
         try:
-            while self.is_running:
-                threading.Event().wait(0.5)
+            if self.transcription_worker:
+                self.transcription_worker.run()
         except Exception as e:
             logger.error("Transcription thread error: %s", e)
+            if self.dictation_box:
+                self.dictation_box.show_status(f"Error: {e}")
 
     def _on_audio_chunk(self, chunk):
-        """Callback from AudioWorker when audio chunk is ready."""
+        """Callback from AudioWorker when audio chunk is ready.
+
+        Runs on the PortAudio callback thread. Must be fast — just enqueue.
+        Heavy work (VAD + transcription) happens in the transcription thread.
+        """
         if self.transcription_worker:
-            self.transcription_worker.process_audio_chunk(chunk)
+            self.transcription_worker.enqueue_chunk(chunk)
 
     def _on_transcription(self, live: str, final: Optional[str]):
         """Callback from TranscriptionWorker when transcription updates."""
@@ -182,12 +196,6 @@ class UIController:
 
     def _on_text_ready(self, text: str):
         """Callback from DictationBox when user clicks Post."""
-        # Finalize any pending transcription
-        if self.transcription_worker:
-            final_text = self.transcription_worker.flush_and_finalize()
-            if final_text:
-                text = final_text
-
         # Inject text into active window
         if self.text_injector:
             try:
@@ -196,7 +204,7 @@ class UIController:
             except Exception as e:
                 logger.error("Failed to inject text: %s", e)
                 if self.dictation_box:
-                    self.dictation_box.status_bar.showMessage(f"Error: {e}")
+                    self.dictation_box.show_status(f"Error: {e}")
 
         # Stop recording
         self.stop()
@@ -206,6 +214,6 @@ class UIController:
         logger.error("Worker error: %s", error_msg)
         if self.dictation_box:
             try:
-                self.dictation_box.status_bar.showMessage(f"Error: {error_msg}")
+                self.dictation_box.show_status(f"Error: {error_msg}")
             except Exception as e:
                 logger.warning("Error updating status: %s", e)

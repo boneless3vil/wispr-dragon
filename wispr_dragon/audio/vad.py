@@ -89,11 +89,14 @@ class VoiceActivityDetector:
                 self._speech_buffer.append(window.numpy())
 
                 if self._silence_counter >= self.silence_samples:
-                    # Speech segment complete
+                    # Speech segment complete. Silero is a streaming RNN — its
+                    # hidden state must be cleared between segments or the next
+                    # one's confidence scores skew based on the previous segment.
                     segment = np.concatenate(self._speech_buffer)
                     self._speech_buffer.clear()
                     self._is_speaking = False
                     self._silence_counter = 0
+                    self._model.reset_states()
 
                     if len(segment) >= self.min_speech_samples:
                         return segment
@@ -106,6 +109,7 @@ class VoiceActivityDetector:
                 self._speech_buffer.clear()
                 self._is_speaking = False
                 self._silence_counter = 0
+                self._model.reset_states()
                 if len(segment) >= self.min_speech_samples:
                     return segment
 
