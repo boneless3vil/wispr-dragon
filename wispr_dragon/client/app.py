@@ -44,7 +44,7 @@ class WisprDragonClient:
                 logger.error("Failed to load config: %s", e)
 
         return {
-            "server_url": "ws://192.168.1.x:8765",
+            "server_url": "ws://localhost:8765",
             "api_key": "",
             "sample_rate": 16000,
             "device": None,

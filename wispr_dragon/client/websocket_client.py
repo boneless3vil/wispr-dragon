@@ -149,11 +149,22 @@ class WebSocketClient:
         while self._running:
             if not self.websocket:
                 if not await self.connect():
+                    self._reconnect_count += 1
+                    if self._reconnect_count > self._max_reconnect_count:
+                        logger.error(
+                            "Giving up after %d failed reconnect attempts",
+                            self._max_reconnect_count,
+                        )
+                        if self.on_status:
+                            self.on_status("failed")
+                        break
                     wait_time = min(2 ** self._reconnect_count, 32)
-                    logger.info("Reconnecting in %d seconds...", wait_time)
+                    logger.info(
+                        "Reconnecting in %d seconds (attempt %d/%d)...",
+                        wait_time, self._reconnect_count, self._max_reconnect_count,
+                    )
                     if self.on_status:
                         self.on_status(f"reconnecting ({self._reconnect_count})")
-                    self._reconnect_count += 1
                     await asyncio.sleep(wait_time)
                     continue
 

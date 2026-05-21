@@ -40,6 +40,17 @@ class WebSocketServer:
         """
         logger.info("New connection from %s", websocket.remote_address)
 
+        # Authenticate: if an API key is configured, require a matching bearer token.
+        api_key = self.config.server.api_key
+        if api_key:
+            provided = websocket.request_headers.get("Authorization", "")
+            if provided != f"Bearer {api_key}":
+                logger.warning(
+                    "Rejecting connection from %s: unauthorized", websocket.remote_address
+                )
+                await websocket.close(code=4001, reason="unauthorized")
+                return
+
         if self.active_connection is not None and self.active_connection != websocket:
             logger.warning("Rejecting connection: max_connections=1 already active")
             await websocket.close(code=4000, reason="already_connected")
@@ -162,6 +173,11 @@ class WebSocketServer:
     async def start(self) -> None:
         """Start the WebSocket server (blocks until stopped)."""
         logger.info("Starting WebSocket server on ws://%s:%d", self.host, self.port)
+        if not self.config.server.api_key:
+            logger.warning(
+                "No api_key configured — server accepts unauthenticated connections. "
+                "Run with --print-key to generate one."
+            )
 
         async with websockets.serve(self.handler, self.host, self.port):
             logger.info("WebSocket server listening")

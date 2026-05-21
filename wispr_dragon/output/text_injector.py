@@ -20,6 +20,11 @@ class TextInjector:
         if method == "auto":
             self._method = self._detect_method()
 
+    @property
+    def method(self) -> str:
+        """The active injection backend after auto-detection."""
+        return self._method
+
     def _detect_method(self) -> str:
         if shutil.which("xdotool"):
             return "xdotool"

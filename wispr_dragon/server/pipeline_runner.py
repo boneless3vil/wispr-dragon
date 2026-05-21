@@ -131,7 +131,7 @@ class PipelineRunner:
                 audio_data,
                 language=self.config.engine.language,
                 initial_prompt=self.hotword_mgr.get_initial_prompt() if self.hotword_mgr else "",
-                hotwords=self.hotword_mgr.get_hotwords() if self.hotword_mgr else {},
+                hotwords=self.hotword_mgr.get_hotwords() if self.hotword_mgr else "",
                 beam_size=self.config.engine.beam_size,
             )
 

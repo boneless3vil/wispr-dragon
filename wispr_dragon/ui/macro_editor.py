@@ -20,7 +20,7 @@ class MacroEditor:
         self.user_dir = user_dir
         self.parent = parent
         self.macros_dir = user_dir / "macros"
-        self.macros_dir.mkdir(exist_ok=True)
+        self.macros_dir.mkdir(parents=True, exist_ok=True)
         self.dialog = None
         self.macro_list = None
         self.selected_macro = None

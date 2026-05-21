@@ -28,7 +28,9 @@ class WebSocketAudioReceiver:
         self.sample_rate = sample_rate
         self.channels = channels
         self._running = False
-        self._sync_queue = queue.Queue()
+        # Bounded so queue_audio()'s queue.Full drop path actually triggers under
+        # backpressure (model slower than real-time) instead of growing unbounded.
+        self._sync_queue = queue.Queue(maxsize=200)
         self._consumer_task = None
 
     @property

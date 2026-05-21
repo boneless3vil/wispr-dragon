@@ -204,7 +204,7 @@ def _handle_ui_mode(config: Config, inject_method: str = "auto") -> int:
             auto_apply_threshold=config.correction.auto_apply_threshold,
         )
         text_injector = TextInjector(method=inject_method)
-        logger.info("Text injection method: %s", text_injector._method)
+        logger.info("Text injection method: %s", text_injector.method)
 
         engine = create_engine(config)
         logger.info("Loading model: %s", config.engine.model_size)
@@ -367,7 +367,7 @@ def main():
         auto_apply_threshold=config.correction.auto_apply_threshold,
     )
     injector = TextInjector(method=args.inject_method)
-    logger.info("Text injection method: %s", injector._method)
+    logger.info("Text injection method: %s", injector.method)
     macro_runner = MacroRunner(config.user_dir, text_injector=injector)
     mode_mgr = ModeManager(macro_runner=macro_runner)
 
