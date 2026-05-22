@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from wispr_dragon.config import Config
+from wispr_dragon.engine.gpu_advisor import recommend_model
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class SettingsDialog:
             from PyQt6.QtWidgets import (
                 QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                 QLabel, QLineEdit, QSpinBox, QDoubleSpinBox,
-                QComboBox, QPushButton, QFormLayout
+                QComboBox, QPushButton, QFormLayout, QWidget
             )
         except ImportError:
             logger.warning("PyQt6 not available, skipping settings dialog")
@@ -85,6 +86,31 @@ class SettingsDialog:
             pass
         engine_form.addRow("Model Size:", model_combo)
         self.widgets["model_size"] = model_combo
+
+        # GPU-aware model recommendation — detects the GPU and suggests a model
+        # sized to free VRAM. Detection never raises; skip the row if it does.
+        try:
+            rec = recommend_model()
+            rec_box = QWidget()
+            rec_layout = QHBoxLayout()
+            rec_layout.setContentsMargins(0, 0, 0, 0)
+
+            rec_label = QLabel(f"<b>{rec.model}</b> — {rec.reason}")
+            rec_label.setWordWrap(True)
+            rec_label.setStyleSheet("color: #555; font-size: 11px;")
+            rec_layout.addWidget(rec_label, 1)
+
+            use_btn = QPushButton("Use")
+            use_btn.setToolTip(f"Set Model Size to {rec.model}")
+            use_btn.clicked.connect(
+                lambda _, m=rec.model: model_combo.setCurrentText(m)
+            )
+            rec_layout.addWidget(use_btn)
+
+            rec_box.setLayout(rec_layout)
+            engine_form.addRow("Recommended:", rec_box)
+        except Exception as e:
+            logger.warning("Skipping model recommendation: %s", e)
 
         # Device
         device_combo = QComboBox()
