@@ -35,9 +35,8 @@ class MacroEditor:
             from PyQt6.QtWidgets import (
                 QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
                 QGroupBox, QLabel, QLineEdit, QComboBox, QTextEdit,
-                QPushButton, QFormLayout, QMessageBox
+                QPushButton, QFormLayout
             )
-            from PyQt6.QtCore import Qt
         except ImportError:
             logger.warning("PyQt6 not available, skipping macro editor")
             return False

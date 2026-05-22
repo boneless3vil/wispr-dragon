@@ -64,17 +64,28 @@ class WebSocketClient:
             return False
 
     async def disconnect(self) -> None:
-        """Disconnect from server."""
+        """Disconnect from server and stop the client for good.
+
+        This is the user-initiated stop. To tear down a single connection
+        while leaving the client free to reconnect, use _close_socket().
+        """
         self._running = False
+        await self._close_socket()
+        logger.info("Disconnected")
+        if self.on_status:
+            self.on_status("disconnected")
+
+    async def _close_socket(self) -> None:
+        """Close the current socket without stopping the client.
+
+        Clears self.websocket so run()'s reconnect path re-establishes it.
+        """
         if self.websocket:
             try:
                 await self.websocket.close()
             except Exception:
                 pass
             self.websocket = None
-        logger.info("Disconnected")
-        if self.on_status:
-            self.on_status("disconnected")
 
     async def send_audio(self, audio_bytes: bytes) -> bool:
         """Send audio chunk to server.
@@ -168,29 +179,42 @@ class WebSocketClient:
                     await asyncio.sleep(wait_time)
                     continue
 
+            # Connection is up: pump audio out and transcripts in until either
+            # side ends — a clean server close, a socket error, or stop().
+            listen_task = asyncio.create_task(self.listen())
+            audio_task = asyncio.create_task(self._feed_audio(audio_queue))
             try:
-                listen_task = asyncio.create_task(self.listen())
-                audio_task = asyncio.create_task(self._feed_audio(audio_queue))
-
                 done, pending = await asyncio.wait(
                     [listen_task, audio_task],
-                    return_when=asyncio.FIRST_EXCEPTION,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-
-                for task in done:
-                    if task.exception():
-                        raise task.exception()
-
-                for task in pending:
-                    task.cancel()
-
             except asyncio.CancelledError:
+                for task in (listen_task, audio_task):
+                    task.cancel()
+                await asyncio.gather(listen_task, audio_task, return_exceptions=True)
                 break
-            except Exception as e:
-                logger.error("Error in run loop: %s", e)
-                if self.on_error:
-                    self.on_error(f"Connection error: {e}")
-                await self.disconnect()
+
+            for task in pending:
+                task.cancel()
+            results = await asyncio.gather(
+                listen_task, audio_task, return_exceptions=True
+            )
+            for result in results:
+                if isinstance(result, Exception) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    logger.error("Error in run loop: %s", result)
+                    if self.on_error:
+                        self.on_error(f"Connection error: {result}")
+
+            # Tear down this connection but keep the client running so the
+            # loop's reconnect path (with backoff) re-establishes it.
+            await self._close_socket()
+            if not self._running:
+                break
+            logger.info("Connection lost — will attempt to reconnect")
+            if self.on_status:
+                self.on_status("disconnected")
 
         logger.info("Client stopped")
 
@@ -203,12 +227,15 @@ class WebSocketClient:
         while self._running and self.websocket:
             try:
                 audio_bytes = await asyncio.wait_for(audio_queue.get(), timeout=0.5)
-                if audio_bytes:
-                    await self.send_audio(audio_bytes)
             except asyncio.TimeoutError:
-                pass
+                continue
             except Exception as e:
                 logger.error("Error feeding audio: %s", e)
+                break
+
+            # A failed send means the socket is dead — end the task so run()
+            # tears the connection down and reconnects.
+            if audio_bytes and not await self.send_audio(audio_bytes):
                 break
 
     def stop(self) -> None:

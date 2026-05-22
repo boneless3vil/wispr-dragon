@@ -36,7 +36,6 @@ class SettingsDialog:
                 QLabel, QLineEdit, QSpinBox, QDoubleSpinBox,
                 QComboBox, QPushButton, QFormLayout
             )
-            from PyQt6.QtCore import Qt
         except ImportError:
             logger.warning("PyQt6 not available, skipping settings dialog")
             return False
@@ -101,6 +100,12 @@ class SettingsDialog:
 
         engine_group.setLayout(engine_form)
         layout.addWidget(engine_group)
+
+        # Model/device changes only take effect when the engine is reloaded,
+        # which happens at startup — make that clear to the user.
+        restart_note = QLabel("Note: model and device changes apply after restart.")
+        restart_note.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(restart_note)
 
         # Correction settings group
         correction_group = QGroupBox("Text Correction")

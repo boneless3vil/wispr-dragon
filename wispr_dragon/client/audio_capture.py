@@ -49,7 +49,12 @@ class WindowsAudioCapture:
             logger.info("Audio capture started (device=%s, rate=%d Hz)", self.device, self.sample_rate)
 
             while self._running:
-                data, overflow = self._stream.read(self.blocksize)
+                # stream.read() blocks ~30ms waiting for samples — run it in a
+                # worker thread so the asyncio event loop (and the websocket
+                # send/listen tasks) keep running.
+                data, overflow = await asyncio.to_thread(
+                    self._stream.read, self.blocksize
+                )
                 if overflow:
                     logger.warning("Audio buffer overflow")
 
@@ -57,8 +62,6 @@ class WindowsAudioCapture:
                     self._queue.put_nowait(data.tobytes())
                 except asyncio.QueueFull:
                     logger.warning("Audio queue full, dropping frame")
-
-                await asyncio.sleep(0.001)
 
         except Exception as e:
             logger.error("Audio capture error: %s", e)

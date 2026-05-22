@@ -10,15 +10,22 @@ logger = logging.getLogger(__name__)
 class SystemTray:
     """Minimal system tray icon with minimize/restore and mode toggle."""
 
-    def __init__(self, dictation_box, on_quit: Optional[Callable] = None):
+    def __init__(
+        self,
+        dictation_box,
+        on_quit: Optional[Callable] = None,
+        on_toggle: Optional[Callable] = None,
+    ):
         """Initialize system tray.
 
         Args:
             dictation_box: DictationBox instance to control
             on_quit: Callback when user selects Quit
+            on_toggle: Callback when user toggles recording on/off
         """
         self.dictation_box = dictation_box
         self.on_quit = on_quit
+        self.on_toggle = on_toggle
         self.tray_widget = None
         self.menu = None
 
@@ -31,7 +38,6 @@ class SystemTray:
         try:
             from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
             from PyQt6.QtGui import QIcon, QAction
-            from PyQt6.QtCore import Qt
         except ImportError:
             logger.warning("PyQt6 not available, skipping system tray")
             return False
@@ -88,8 +94,14 @@ class SystemTray:
             self.dictation_box.raise_()
 
     def _on_toggle_recording(self) -> None:
-        """Handle toggle recording action (placeholder)."""
+        """Handle toggle recording action.
+
+        Invokes the on_toggle callback (wired by UIController) so the menu
+        item actually starts/stops recording rather than only logging.
+        """
         logger.debug("Toggle recording requested")
+        if self.on_toggle:
+            self.on_toggle()
 
     def _on_quit_clicked(self) -> None:
         """Handle Quit action."""

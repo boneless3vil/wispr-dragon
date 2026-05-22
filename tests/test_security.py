@@ -149,33 +149,39 @@ def test_admin_lock_overrides_config(security_policy, temp_user_dir):
 
 
 def test_remove_admin_lock_success(security_policy, temp_user_dir):
-    """Test removing admin lock with correct password hash."""
-    password_hash = "bcrypt_hash_123"
+    """Test removing admin lock with the correct password."""
+    import bcrypt
+
+    password = "correct horse battery staple"
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     policy = {"allow_python_scripts": False}
 
     security_policy.set_admin_lock(password_hash, policy)
     assert security_policy.is_locked() is True
 
-    result = security_policy.remove_admin_lock(password_hash)
+    result = security_policy.remove_admin_lock(password)
     assert result is True
     assert security_policy.is_locked() is False
 
 
 def test_remove_admin_lock_wrong_password(security_policy, temp_user_dir):
-    """Test that remove_admin_lock fails with wrong password."""
-    password_hash = "bcrypt_hash_123"
+    """Test that remove_admin_lock fails with the wrong password."""
+    import bcrypt
+
+    password = "correct horse battery staple"
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     policy = {"allow_python_scripts": False}
 
     security_policy.set_admin_lock(password_hash, policy)
 
-    result = security_policy.remove_admin_lock("wrong_hash")
+    result = security_policy.remove_admin_lock("wrong password")
     assert result is False
     assert security_policy.is_locked() is True
 
 
 def test_remove_admin_lock_no_lock_file(security_policy):
     """Test remove_admin_lock when no lock file exists."""
-    result = security_policy.remove_admin_lock("any_hash")
+    result = security_policy.remove_admin_lock("any password")
     assert result is False
 
 

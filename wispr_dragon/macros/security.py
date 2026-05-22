@@ -171,15 +171,19 @@ class SecurityPolicy:
             logger.error("Failed to set admin lock: %s", e)
             return False
 
-    def remove_admin_lock(self, password_hash: str) -> bool:
-        """Remove admin lock after verifying password.
+    def remove_admin_lock(self, password: str) -> bool:
+        """Remove admin lock after verifying the admin password.
 
         Args:
-            password_hash: bcrypt hash to verify against stored hash
+            password: Plaintext admin password, verified against the stored
+                bcrypt hash. (A pre-computed hash cannot be used here — bcrypt
+                salts every hash, so two hashes of the same password differ.)
 
         Returns:
-            True if password matches and lock is removed
+            True if the password matches and the lock is removed
         """
+        import bcrypt
+
         if not self.lock_file.exists():
             logger.warning("No admin lock to remove")
             return False
@@ -188,8 +192,15 @@ class SecurityPolicy:
         if not lock_data:
             return False
 
-        if lock_data.get("password_hash") != password_hash:
-            logger.error("Admin password mismatch")
+        stored_hash = lock_data.get("password_hash", "")
+        try:
+            if not stored_hash or not bcrypt.checkpw(
+                password.encode(), stored_hash.encode()
+            ):
+                logger.error("Admin password mismatch")
+                return False
+        except ValueError:
+            logger.error("Stored admin password hash is malformed")
             return False
 
         try:

@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from typing import Callable, Optional
+from typing import Optional
 import websockets
 from websockets.server import WebSocketServerProtocol
 
@@ -30,6 +30,7 @@ class WebSocketServer:
         self.active_connection: Optional[WebSocketServerProtocol] = None
         self.audio_receiver: Optional[WebSocketAudioReceiver] = None
         self.process_task: Optional[asyncio.Task] = None
+        self._paused = False
 
     async def handler(self, websocket: WebSocketServerProtocol, path: str) -> None:
         """Handle a new WebSocket connection.
@@ -57,7 +58,8 @@ class WebSocketServer:
             return
 
         self.active_connection = websocket
-        self.audio_receiver = WebSocketAudioReceiver(None, sample_rate=16000, channels=1)
+        self.audio_receiver = WebSocketAudioReceiver(sample_rate=16000, channels=1)
+        self._paused = False
 
         try:
             await websocket.send(json.dumps({"type": "ready", "server_version": "1.0.0"}))
@@ -107,8 +109,10 @@ class WebSocketServer:
         msg_type = data.get("type")
 
         if msg_type == "pause":
+            self._paused = True
             logger.debug("Client paused recording")
         elif msg_type == "resume":
+            self._paused = False
             logger.debug("Client resumed recording")
         elif msg_type == "ping":
             ts = data.get("ts", 0)
@@ -126,10 +130,17 @@ class WebSocketServer:
 
         while self.active_connection:
             try:
-                await asyncio.sleep(0.05)
-
+                # read() blocks up to `timeout` when the queue is empty, so this
+                # loop idles without spinning. No extra sleep — an artificial
+                # delay here makes the consumer slower than real-time audio and
+                # the bounded queue then drops frames during sustained speech.
                 audio_chunk = await asyncio.to_thread(self.audio_receiver.read, timeout=0.1)
                 if audio_chunk is None:
+                    continue
+
+                # While paused, keep draining the queue (read() above consumed
+                # the frame) but skip transcription.
+                if self._paused:
                     continue
 
                 result = await asyncio.to_thread(
@@ -181,7 +192,6 @@ class WebSocketServer:
 
         async with websockets.serve(self.handler, self.host, self.port):
             logger.info("WebSocket server listening")
-            try:
-                await asyncio.Future()
-            except KeyboardInterrupt:
-                logger.info("Server shutting down")
+            # KeyboardInterrupt surfaces at the asyncio.run() boundary in
+            # _handle_server_mode, not here — just wait forever.
+            await asyncio.Future()

@@ -1,6 +1,5 @@
 """WebSocket-based audio receiver that mirrors NetworkAudioCapture interface."""
 
-import asyncio
 import logging
 import numpy as np
 import queue
@@ -16,15 +15,13 @@ class WebSocketAudioReceiver:
     in the main pipeline loop.
     """
 
-    def __init__(self, audio_queue: asyncio.Queue, sample_rate: int = 16000, channels: int = 1):
+    def __init__(self, sample_rate: int = 16000, channels: int = 1):
         """Initialize receiver.
 
         Args:
-            audio_queue: asyncio.Queue that receives binary audio frames
             sample_rate: Audio sample rate in Hz
             channels: Number of audio channels
         """
-        self.audio_queue = audio_queue
         self.sample_rate = sample_rate
         self.channels = channels
         self._running = False
@@ -55,7 +52,7 @@ class WebSocketAudioReceiver:
             timeout: Timeout in seconds for reading from queue
 
         Returns:
-            numpy array of int16 audio samples, or None if timeout
+            numpy array of float32 audio samples in [-1.0, 1.0], or None if timeout
         """
         if not self._running:
             return None

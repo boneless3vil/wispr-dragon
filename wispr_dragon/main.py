@@ -10,8 +10,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
-
 from .config import Config
 from .correction.dictionary import UserDictionary
 from .correction.hotwords import HotwordManager
@@ -36,7 +34,6 @@ def setup_logging(verbose: bool = False) -> None:
 
 def _handle_sign_script(script_name: str, user_dir) -> int:
     """Sign a Python script."""
-    from pathlib import Path
     scripts_dir = user_dir / "scripts"
     script_path = scripts_dir / script_name
 
@@ -52,7 +49,6 @@ def _handle_sign_script(script_name: str, user_dir) -> int:
 def _handle_admin_lock(user_dir) -> int:
     """Enable admin lock with password."""
     import bcrypt
-    from pathlib import Path
 
     password = getpass.getpass("Enter admin password: ")
     confirm = getpass.getpass("Confirm password: ")
@@ -81,14 +77,13 @@ def _handle_admin_lock(user_dir) -> int:
 
 def _handle_admin_unlock(user_dir) -> int:
     """Disable admin lock."""
-    import bcrypt
-    from pathlib import Path
-
     password = getpass.getpass("Enter admin password: ")
-    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
+    # Pass the plaintext password — remove_admin_lock verifies it against the
+    # stored hash with bcrypt.checkpw. Hashing here would produce a fresh salt
+    # that could never match the stored hash.
     security = SecurityPolicy(user_dir)
-    if security.remove_admin_lock(password_hash):
+    if security.remove_admin_lock(password):
         print("✓ Admin lock removed")
         return 0
     else:
@@ -98,8 +93,6 @@ def _handle_admin_unlock(user_dir) -> int:
 
 def _handle_security_status(user_dir) -> int:
     """Show current security policy."""
-    from pathlib import Path
-
     security = SecurityPolicy(user_dir)
     print("\n=== Wispr-Dragon Security Status ===\n")
 
@@ -120,8 +113,6 @@ def _handle_security_status(user_dir) -> int:
 
 def _handle_clear_trust(user_dir) -> int:
     """Clear trusted programs/scripts."""
-    from pathlib import Path
-
     trust_file = user_dir / "trusted.json"
     if trust_file.exists():
         trust_file.unlink()
@@ -502,7 +493,7 @@ def main():
                 beam_size=config.engine.beam_size,
             )
 
-            if not result.text.strip():
+            if not result or not result.text.strip():
                 continue
 
             # Post-process
