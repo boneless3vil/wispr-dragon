@@ -8,6 +8,7 @@ from typing import Optional
 
 from wispr_dragon.client.audio_capture import WindowsAudioCapture
 from wispr_dragon.client.websocket_client import WebSocketClient
+from wispr_dragon.client.windows_injector import WindowsTextInjector
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +18,13 @@ DEFAULT_CONFIG_PATH = Path.home() / "AppData" / "Local" / "WisprDragon" / "confi
 class WisprDragonClient:
     """Main client application."""
 
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None, inject: bool = True):
         """Initialize client.
 
         Args:
             config_path: Path to client config JSON
+            inject: When True, type received transcripts into the focused
+                Windows app; when False, only print them.
         """
         self.config_path = config_path or DEFAULT_CONFIG_PATH
         self.config = self._load_config()
@@ -29,6 +32,8 @@ class WisprDragonClient:
         self.ws_client = None
         self.audio_queue = None
         self._running = False
+        self.inject_enabled = inject
+        self.injector = WindowsTextInjector()
 
     def _load_config(self) -> dict:
         """Load client configuration.
@@ -60,6 +65,16 @@ class WisprDragonClient:
     async def run(self) -> None:
         """Run the client (async main loop)."""
         self._running = True
+
+        if self.inject_enabled and not self.injector.available:
+            logger.warning(
+                "Text injection requested but unavailable on this platform — "
+                "transcripts will only be printed"
+            )
+        logger.info(
+            "Text injection: %s",
+            "on" if (self.inject_enabled and self.injector.available) else "off",
+        )
 
         self.audio_queue = asyncio.Queue()
         self.audio_capture = WindowsAudioCapture(
@@ -103,6 +118,9 @@ class WisprDragonClient:
             text: Transcribed text from server
         """
         print(f"[TRANSCRIPT] {text}")
+        if self.inject_enabled:
+            # Trailing space so consecutive phrases don't run together.
+            self.injector.inject(text + " ")
 
     def _on_error(self, error: str) -> None:
         """Handle error from server.
@@ -133,13 +151,20 @@ def main():
     parser = argparse.ArgumentParser(description="Wispr Dragon Client")
     parser.add_argument("--config", type=str, help="Path to config file")
     parser.add_argument("--list-devices", action="store_true", help="List audio devices")
+    parser.add_argument(
+        "--no-inject", action="store_true",
+        help="Don't type transcripts into the focused window — just print them",
+    )
     args = parser.parse_args()
 
     if args.list_devices:
         WindowsAudioCapture.list_devices()
         return 0
 
-    client = WisprDragonClient(Path(args.config) if args.config else None)
+    client = WisprDragonClient(
+        Path(args.config) if args.config else None,
+        inject=not args.no_inject,
+    )
     asyncio.run(client.run())
     return 0
 
