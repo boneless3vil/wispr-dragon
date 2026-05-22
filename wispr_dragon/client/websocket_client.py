@@ -142,8 +142,16 @@ class WebSocketClient:
                 except json.JSONDecodeError:
                     logger.warning("Invalid JSON from server: %s", message[:100])
 
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("Connection closed by server")
+        except websockets.exceptions.ConnectionClosed as e:
+            # 4001 = server rejected our credentials. Reconnecting would just
+            # storm the server with the same bad key, so stop for good.
+            if getattr(e, "code", None) == 4001:
+                logger.error("Server rejected credentials (unauthorized)")
+                self._running = False
+                if self.on_error:
+                    self.on_error("Authentication failed — check the API key")
+            else:
+                logger.info("Connection closed by server")
         except Exception as e:
             logger.error("Error in listen: %s", e)
             if self.on_error:
