@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 logger = logging.getLogger(__name__)
 
 # Accent colors — also used at runtime to recolor the record-state dot.
-_ACCENT = "#2563eb"   # blue: recording
+_ACCENT = "#436547"   # sage green: recording
 _IDLE = "#9ca3af"     # gray: idle
 
 # Clean light theme, applied as a Qt style sheet on the window so it overrides
@@ -64,17 +64,17 @@ QPushButton:pressed {
     background: #d1d5db;
 }
 QPushButton#postButton {
-    background: #2563eb;
-    border: 1px solid #2563eb;
+    background: #436547;
+    border: 1px solid #436547;
     color: #ffffff;
 }
 QPushButton#postButton:hover {
-    background: #1d4ed8;
-    border: 1px solid #1d4ed8;
+    background: #39563c;
+    border: 1px solid #39563c;
 }
 QPushButton#postButton:pressed {
-    background: #1e40af;
-    border: 1px solid #1e40af;
+    background: #2f4732;
+    border: 1px solid #2f4732;
 }
 QStatusBar {
     color: #6b7280;
