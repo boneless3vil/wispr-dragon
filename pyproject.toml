@@ -24,7 +24,14 @@ gui = ["PyQt6>=6.7"]
 whisper-fallback = ["openai-whisper>=20240930"]
 openai-api = ["openai>=1.0", "pydub>=0.25"]
 server = ["websockets>=12.0,<13"]
-client = ["websockets>=12.0,<13", "pystray>=0.19", "Pillow>=10.0"]
+client = [
+    "websockets>=12.0,<13",
+    "pystray>=0.19",
+    "Pillow>=10.0",
+    "pynput>=1.7",
+    "PyQt6>=6.7",
+    "qasync>=0.27",
+]
 dev = ["pytest>=7.0", "pytest-cov>=4.0"]
 
 [project.urls]

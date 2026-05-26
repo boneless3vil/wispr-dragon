@@ -25,6 +25,7 @@ class WindowsAudioCapture:
         self.blocksize = 480  # 30ms at 16kHz
         self._stream = None
         self._running = False
+        self._paused = False
         self._queue = None
 
     async def start(self, queue: asyncio.Queue) -> None:
@@ -58,6 +59,11 @@ class WindowsAudioCapture:
                 if overflow:
                     logger.warning("Audio buffer overflow")
 
+                # While paused, drain the stream but don't send anything —
+                # the hotkey controls when audio reaches the server.
+                if self._paused:
+                    continue
+
                 try:
                     self._queue.put_nowait(data.tobytes())
                 except asyncio.QueueFull:
@@ -75,6 +81,17 @@ class WindowsAudioCapture:
     def stop(self) -> None:
         """Stop audio capture."""
         self._running = False
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause/resume enqueuing audio frames. The stream stays open so the
+        device isn't re-initialized on every toggle — only the put_nowait is
+        gated by this flag.
+        """
+        self._paused = paused
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
 
     @staticmethod
     def list_devices() -> None:
