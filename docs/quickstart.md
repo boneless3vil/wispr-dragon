@@ -149,8 +149,8 @@ wispr-dragon/
 │   ├── test_integration.py # Full integration
 │   └── test_transcription.py
 ├── README.md               # Full documentation
-├── SETUP_OPENAI_API.md     # API setup guide
-└── QUICKSTART.md           # This file
+├── docs/setup-openai.md    # API setup guide
+└── docs/quickstart.md      # This file
 ```
 
 ---
@@ -178,7 +178,7 @@ wispr-dragon/
 - `wispr_dragon/engine/openai_api_engine.py` - OpenAI API engine with GPT 5.5 support
 - `scripts/test_integration.py` - Integration test suite
 - `README.md` - Full documentation
-- `SETUP_OPENAI_API.md` - API setup guide
+- `docs/setup-openai.md` - API setup guide
 
 ### Modified Files
 - `wispr_dragon/main.py` - Added OpenAI API engine support
@@ -226,7 +226,7 @@ audio:
 ## Support
 
 - **Documentation**: See README.md
-- **Setup Help**: See SETUP_OPENAI_API.md
+- **Setup Help**: See [docs/setup-openai.md](setup-openai.md)
 - **Issues**: Open a GitHub issue
 - **Questions**: Check the docs first!
 
