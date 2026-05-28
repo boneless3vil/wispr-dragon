@@ -30,7 +30,6 @@ class TestAudioWorker:
         """Test AudioWorker initializes with correct state."""
         assert worker.is_running is False
         assert worker.audio_stream is None
-        assert worker.vad is None
 
     def test_audio_worker_setup_checks_dependencies(self, worker):
         """Test setup() returns False if dependencies missing."""
@@ -44,13 +43,12 @@ class TestAudioWorker:
         worker.is_running = True
         mock_stream = Mock()
         worker.audio_stream = mock_stream
-        worker.vad = Mock()
 
         worker.cleanup()
 
         assert worker.is_running is False
-        assert worker.vad is None
-        # Stream should be closed
+        assert worker.audio_stream is None
+        mock_stream.stop.assert_called_once()
         mock_stream.close.assert_called_once()
 
     def test_audio_worker_callback_integration(self, worker):
@@ -79,141 +77,160 @@ class TestAudioWorker:
 
 
 class TestTranscriptionWorker:
-    """Tests for TranscriptionWorker (transcription processing)."""
+    """Tests for TranscriptionWorker (queue-based transcription pipeline)."""
 
     @pytest.fixture
     def mock_engine(self):
         """Create mock transcription engine."""
+        result = Mock()
+        result.text = "hello world"
         engine = Mock()
-        engine.transcribe.return_value = {"text": "hello world"}
+        engine.transcribe.return_value = result
         return engine
 
     @pytest.fixture
-    def worker(self, mock_engine):
+    def mock_vad(self):
+        """Create mock VAD that returns None (no segment complete)."""
+        vad = Mock()
+        vad.process_chunk.return_value = None
+        return vad
+
+    @pytest.fixture
+    def worker(self, mock_engine, mock_vad):
         """Create transcription worker."""
-        return TranscriptionWorker(mock_engine)
+        return TranscriptionWorker(mock_engine, vad=mock_vad)
 
     def test_transcription_worker_initialization(self, worker):
         """Test TranscriptionWorker initializes with correct state."""
-        assert len(worker.audio_buffer) == 0
-        assert worker.is_processing is False
-        assert worker.buffer_max_seconds == 30
-        assert worker.sample_rate == 16000
+        assert worker._running is False
+        assert worker._queue.empty()
+        assert worker.engine is not None
+        assert worker.vad is not None
 
-    def test_transcription_worker_process_audio_chunk(self, worker, mock_engine):
-        """Test processing an audio chunk."""
+    def test_transcription_worker_enqueue_chunk(self, worker):
+        """Test enqueuing an audio chunk."""
         chunk = np.random.randn(1600).astype(np.float32)
-        callback = Mock()
-        worker.on_transcription = callback
+        worker.enqueue_chunk(chunk)
+        assert not worker._queue.empty()
 
-        worker.process_audio_chunk(chunk)
+    def test_transcription_worker_enqueue_drops_oldest_when_full(self):
+        """Test that a full queue drops the oldest chunk."""
+        engine = Mock()
+        vad = Mock()
+        worker = TranscriptionWorker(engine, vad=vad, max_queue_size=2)
 
-        # Buffer should contain the chunk
-        assert len(worker.audio_buffer) > 0
-        # Engine should have been called (if buffer >= sample_rate)
-        if len(worker.audio_buffer) >= worker.sample_rate:
-            assert mock_engine.transcribe.called or not worker.is_processing
+        chunk1 = np.array([1.0], dtype=np.float32)
+        chunk2 = np.array([2.0], dtype=np.float32)
+        chunk3 = np.array([3.0], dtype=np.float32)
 
-    def test_transcription_worker_buffer_cap(self, worker):
-        """Test that buffer doesn't grow unbounded."""
-        # Create 31 seconds of audio (exceeds 30-second cap)
-        chunk_size = worker.sample_rate // 10  # 0.1s chunks
-        for _ in range(310):
-            chunk = np.random.randn(chunk_size).astype(np.float32)
-            worker.process_audio_chunk(chunk)
+        worker.enqueue_chunk(chunk1)
+        worker.enqueue_chunk(chunk2)
+        worker.enqueue_chunk(chunk3)  # Should drop chunk1
 
-        # Buffer should be capped to 30 seconds
-        max_samples = int(worker.buffer_max_seconds * worker.sample_rate)
-        assert len(worker.audio_buffer) <= max_samples + chunk_size
+        assert worker._queue.qsize() == 2
 
-    def test_transcription_worker_int16_conversion(self, worker):
-        """Test that int16 audio is converted to float32."""
-        chunk = np.array([16384, -16384, 0], dtype=np.int16)
-        worker.on_transcription = Mock()
+    def test_transcription_worker_run_requires_vad(self, mock_engine):
+        """Test that run() errors without a VAD."""
+        on_error = Mock()
+        worker = TranscriptionWorker(mock_engine, vad=None, on_error=on_error)
+        worker.run()
+        on_error.assert_called_once()
 
-        worker.process_audio_chunk(chunk)
+    def test_transcription_worker_run_processes_segment(self, mock_engine, mock_vad):
+        """Test that run() transcribes when VAD returns a segment."""
+        segment = np.random.randn(16000).astype(np.float32)
+        mock_vad.process_chunk.return_value = segment
+        on_transcription = Mock()
 
-        # Buffer should be in float32
-        assert worker.audio_buffer.dtype == np.float32
+        worker = TranscriptionWorker(
+            mock_engine, vad=mock_vad, on_transcription=on_transcription
+        )
+        chunk = np.random.randn(1600).astype(np.float32)
+        worker.enqueue_chunk(chunk)
 
-    def test_transcription_worker_flush_and_finalize(self, worker, mock_engine):
-        """Test finalizing transcription."""
-        # Add some audio to buffer
-        chunk = np.random.randn(worker.sample_rate).astype(np.float32)
-        worker.audio_buffer = chunk
-        callback = Mock()
-        worker.on_transcription = callback
+        # run() will process one chunk then block on empty queue; stop after first
+        import threading
+        threading.Timer(0.6, worker.stop).start()
+        worker.run()
 
-        result = worker.flush_and_finalize()
-
-        assert result == "hello world"
-        assert len(worker.audio_buffer) == 0
         mock_engine.transcribe.assert_called_once()
-        callback.assert_called_once()
+        on_transcription.assert_called_once_with(live="", final="hello world")
 
-    def test_transcription_worker_flush_empty_buffer(self, worker):
-        """Test flush with empty buffer returns None."""
-        result = worker.flush_and_finalize()
-        assert result is None
+    def test_transcription_worker_run_applies_post_processor(self, mock_engine, mock_vad):
+        """Test that run() applies the post-processor to transcribed text."""
+        segment = np.random.randn(16000).astype(np.float32)
+        mock_vad.process_chunk.return_value = segment
+        post_processor = Mock()
+        post_processor.process.return_value = "HELLO WORLD"
+        on_transcription = Mock()
 
-    def test_transcription_worker_reset(self, worker):
-        """Test reset clears state."""
-        worker.audio_buffer = np.array([1.0, 2.0, 3.0])
-        worker.is_processing = True
+        worker = TranscriptionWorker(
+            mock_engine, vad=mock_vad, post_processor=post_processor,
+            on_transcription=on_transcription,
+        )
+        worker.enqueue_chunk(np.random.randn(1600).astype(np.float32))
+
+        import threading
+        threading.Timer(0.6, worker.stop).start()
+        worker.run()
+
+        post_processor.process.assert_called_once_with("hello world")
+        on_transcription.assert_called_once_with(live="", final="HELLO WORLD")
+
+    def test_transcription_worker_run_error_handling(self, mock_vad):
+        """Test error callback is invoked on transcription exception."""
+        engine = Mock()
+        engine.transcribe.side_effect = RuntimeError("Test error")
+        segment = np.random.randn(16000).astype(np.float32)
+        mock_vad.process_chunk.return_value = segment
+        on_error = Mock()
+
+        worker = TranscriptionWorker(engine, vad=mock_vad, on_error=on_error)
+        worker.enqueue_chunk(np.random.randn(1600).astype(np.float32))
+
+        import threading
+        threading.Timer(0.6, worker.stop).start()
+        worker.run()
+
+        on_error.assert_called()
+
+    def test_transcription_worker_stop(self, worker):
+        """Test stop() signals the run loop to exit."""
+        worker._running = True
+        worker.stop()
+        assert worker._running is False
+
+    def test_transcription_worker_reset(self, worker, mock_vad):
+        """Test reset clears queue and resets VAD."""
+        worker.enqueue_chunk(np.array([1.0, 2.0, 3.0], dtype=np.float32))
+        assert not worker._queue.empty()
 
         worker.reset()
 
-        assert len(worker.audio_buffer) == 0
-        assert worker.is_processing is False
-
-    def test_transcription_worker_with_post_processor(self, mock_engine):
-        """Test integration with post-processor."""
-        post_processor = Mock()
-        post_processor.process.return_value = "HELLO WORLD"
-        worker = TranscriptionWorker(mock_engine, post_processor=post_processor)
-
-        chunk = np.random.randn(worker.sample_rate).astype(np.float32)
-        worker.audio_buffer = chunk
-        worker.on_transcription = Mock()
-
-        result = worker.flush_and_finalize()
-
-        assert result == "HELLO WORLD"
-        post_processor.process.assert_called_once_with("hello world")
-
-    def test_transcription_worker_error_handling(self, worker):
-        """Test error callback is invoked on exception."""
-        worker.on_error = Mock()
-        worker.engine = Mock()
-        worker.engine.transcribe.side_effect = RuntimeError("Test error")
-
-        worker.audio_buffer = np.random.randn(worker.sample_rate).astype(np.float32)
-
-        result = worker.flush_and_finalize()
-
-        assert result is None
-        worker.on_error.assert_called()
+        assert worker._queue.empty()
+        mock_vad.reset.assert_called_once()
 
 
 class TestUIComponentsIntegration:
     """Integration tests for UI components."""
 
     def test_audio_and_transcription_worker_chain(self):
-        """Test audio → transcription pipeline."""
+        """Test audio → transcription pipeline via enqueue_chunk."""
         mock_engine = Mock()
-        mock_engine.transcribe.return_value = {"text": "test audio"}
+        mock_vad = Mock()
+        mock_vad.process_chunk.return_value = None
 
         audio_worker = AudioWorker(Mock())
-        transcription_worker = TranscriptionWorker(mock_engine)
+        transcription_worker = TranscriptionWorker(mock_engine, vad=mock_vad)
 
-        # Simulate audio chunk
+        # Simulate audio chunk flowing from audio worker to transcription worker
         chunk = np.random.randn(1600).astype(np.float32)
         audio_worker.is_running = True
 
-        # Audio worker would call the callback
-        transcription_worker.process_audio_chunk(chunk)
+        # Audio worker would call enqueue_chunk via its callback
+        transcription_worker.enqueue_chunk(chunk)
 
-        assert len(transcription_worker.audio_buffer) > 0
+        assert not transcription_worker._queue.empty()
 
     def test_ui_config_integration(self):
         """Test UI config is properly initialized."""
