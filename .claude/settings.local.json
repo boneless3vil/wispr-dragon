@@ -94,7 +94,11 @@
       "Bash(dir \"\\\\\\\\wsl.localhost\\\\ubuntu\\\\home\\\\jon\\\\wispr_dragon\")",
       "Bash(ls \"\\\\\\\\wsl.localhost\\\\ubuntu\\\\home\\\\jon\\\\wispr_dragon\\\\wispr_dragon\")",
       "Bash(cat \"\\\\\\\\wsl.localhost\\\\ubuntu\\\\home\\\\jon\\\\wispr_dragon\\\\setup.py\")",
-      "Bash(cat \"\\\\\\\\wsl.localhost\\\\ubuntu\\\\home\\\\jon\\\\wispr_dragon\\\\pyproject.toml\")"
+      "Bash(cat \"\\\\\\\\wsl.localhost\\\\ubuntu\\\\home\\\\jon\\\\wispr_dragon\\\\pyproject.toml\")",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(gh auth:*)",
+      "Bash(gh pr:*)"
     ],
     "additionalDirectories": [
       "\\\\wsl.localhost\\Ubuntu\\home\\jon\\.claude\\projects\\--wsl-localhost-Ubuntu-home-jon-wispr-dragon\\memory",
