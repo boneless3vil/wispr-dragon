@@ -1,6 +1,6 @@
 # OpenAI API Whisper Setup Guide
 
-This guide covers setting up Wispr Dragon to use the OpenAI API for speech recognition, including the new GPT 5.5 model.
+This guide covers setting up Wispr_Dragon to use the OpenAI API for speech recognition, including the new GPT 5.5 model.
 
 ## Why Use OpenAI API?
 
@@ -48,9 +48,9 @@ $env:OPENAI_API_KEY = "sk-your-key-here"
 [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "sk-your-key-here", [EnvironmentVariableTarget]::User)
 ```
 
-## Step 4: Configure Wispr Dragon
+## Step 4: Configure Wispr_Dragon
 
-Edit or create `~/.wispr-dragon/config.yaml`:
+Edit or create `~/.wispr_dragon/config.yaml`:
 
 ```yaml
 engine:
@@ -67,7 +67,7 @@ audio:
   silence_duration_ms: 500
 ```
 
-## Step 5: Run Wispr Dragon
+## Step 5: Run Wispr_Dragon
 
 ```bash
 # Verify API key is set

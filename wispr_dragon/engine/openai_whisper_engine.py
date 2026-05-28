@@ -39,7 +39,12 @@ class OpenAIWhisperEngine(TranscriptionEngine):
         import torch
 
         if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.version, 'hip') and torch.version.hip:
+                device = "cuda"  # ROCm uses cuda device string in PyTorch
+            else:
+                device = "cpu"
 
         self._device = device
         logger.info(

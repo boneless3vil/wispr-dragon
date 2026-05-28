@@ -3,10 +3,6 @@
 
 import sys
 import time
-from pathlib import Path
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def test_audio_capture():

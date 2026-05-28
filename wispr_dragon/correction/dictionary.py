@@ -8,7 +8,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PATH = Path.home() / ".wispr-dragon" / "user_dictionary.json"
+DEFAULT_PATH = Path.home() / ".wispr_dragon" / "user_dictionary.json"
 
 
 class UserDictionary:
@@ -51,6 +51,7 @@ class UserDictionary:
         }
         with open(self.path, "w") as f:
             json.dump(data, f, indent=2)
+        self.path.chmod(0o600)
 
     def add_correction(self, wrong: str, correct: str) -> None:
         """Record a correction from wrong text to correct text."""

@@ -20,22 +20,43 @@ A powerful speech recognition application for Linux/WSL2 with support for multip
 
 ### Prerequisites
 
-- Python 3.9+
-- CUDA/ROCm (optional, for GPU acceleration)
+- **Python 3.11+**
+- **Microphone** for audio input (physical, USB, or network)
+- **CUDA/ROCm** (optional, for GPU acceleration with faster-whisper)
 
-### Setup
+### Option 1: PyPI Install (Recommended for Users)
+
+```bash
+# CLI only (minimal dependencies)
+pip install wispr_dragon
+
+# With GUI (floating dictation box)
+pip install wispr_dragon[gui]
+
+# With optional transcription engines
+pip install wispr_dragon[gui,openai-api,whisper-fallback]
+
+# Then run
+wispr_dragon --help
+wispr_dragon --ui  # Launch floating dictation box
+```
+
+### Option 2: Development Install (For Contributors)
 
 ```bash
 # Clone the repository
-git clone <repo-url>
-cd wispr-dragon
+git clone https://github.com/yourusername/wispr_dragon.git
+cd wispr_dragon
 
-# Create environment
-conda env create -f environment.yml
-conda activate wispr-dragon
+# Create environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install in development mode
-pip install -e .
+# Install in development mode with all extras
+pip install -e ".[gui,dev,openai-api,whisper-fallback]"
+
+# Run tests
+pytest tests/ -v
 ```
 
 ### Audio Setup (WSL2)
@@ -50,6 +71,38 @@ python scripts/test_audio.py
 # (Configure Windows-side audio capture server)
 ```
 
+### GPU Setup (Optional)
+
+For faster transcription, enable GPU acceleration:
+
+#### NVIDIA CUDA
+
+```bash
+# Install CUDA-enabled PyTorch
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# For faster-whisper
+pip install faster-whisper[cuda]
+```
+
+#### AMD ROCm
+
+```bash
+# Install ROCm-enabled PyTorch (Ubuntu)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.0
+
+# For faster-whisper, use community ROCm builds
+pip install faster-whisper  # May require manual ROCm CTranslate2
+```
+
+Set device in config:
+
+```yaml
+engine:
+  device: cuda  # or rocm, auto, cpu
+  compute_type: float16  # Use float16 for GPU acceleration
+```
+
 ## Usage
 
 ### Quick Start
@@ -59,7 +112,7 @@ python scripts/test_audio.py
 python -m wispr_dragon
 
 # Or use the main entry point
-wispr-dragon
+wispr_dragon
 ```
 
 ### Using OpenAI API Engine (GPT 5.5)
@@ -75,7 +128,7 @@ wispr-dragon
 
 #### Configuration
 
-Edit `~/.wispr-dragon/config.yaml`:
+Edit `~/.wispr_dragon/config.yaml`:
 
 ```yaml
 engine:
@@ -123,14 +176,14 @@ engine:
 ### Command Line Options
 
 ```bash
-wispr-dragon --help
+wispr_dragon --help
 
 # Examples:
-wispr-dragon --verbose                    # Debug output
-wispr-dragon --model large-v3             # Override model size
-wispr-dragon --device cuda                # Force GPU
-wispr-dragon --no-vad                     # Disable voice activity detection
-wispr-dragon --config /path/to/config.yaml
+wispr_dragon --verbose                    # Debug output
+wispr_dragon --model large-v3             # Override model size
+wispr_dragon --device cuda                # Force GPU
+wispr_dragon --no-vad                     # Disable voice activity detection
+wispr_dragon --config /path/to/config.yaml
 ```
 
 ## Testing
@@ -160,7 +213,7 @@ python scripts/test_integration.py
 ## Configuration
 
 ### Default Config Location
-`~/.wispr-dragon/config.yaml`
+`~/.wispr_dragon/config.yaml`
 
 ### Audio Configuration
 
@@ -204,7 +257,7 @@ correction:
 
 ### Command Mode (Default)
 
-Execute voice commands defined in `~/.wispr-dragon/commands.yaml`:
+Execute voice commands defined in `~/.wispr_dragon/commands.yaml`:
 
 ```yaml
 commands:

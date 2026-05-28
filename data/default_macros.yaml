@@ -1,0 +1,47 @@
+# Default macro definitions for Wispr-Dragon
+# Place user macros in ~/.wispr_dragon/macros/custom.yaml
+
+macros:
+  # Launch applications
+  - trigger: "open browser"
+    action: launch
+    program: firefox
+    description: Open Firefox web browser
+
+  - trigger: "open terminal"
+    action: launch
+    program: gnome-terminal
+    description: Open GNOME Terminal
+
+  - trigger: "open {app}"
+    action: launch
+    program: "{app}"
+    description: Open any application by name
+
+  # Text injection
+  - trigger: "type my email"
+    action: text
+    content: "jon@example.com"
+    description: Type a pre-configured email address
+
+  # Keystrokes
+  - trigger: "take screenshot"
+    action: keystroke
+    keys: Print
+    description: Take a screenshot (Print key)
+
+  - trigger: "next tab"
+    action: keystroke
+    keys: ctrl+Tab
+    description: Switch to next browser tab
+
+  - trigger: "previous tab"
+    action: keystroke
+    keys: ctrl+shift+Tab
+    description: Switch to previous browser tab
+
+  # Python scripts (must be signed first with: wispr_dragon --sign-script my_script.py)
+  # - trigger: "run my script"
+  #   action: python_script
+  #   script: my_script.py
+  #   description: Execute a custom Python script

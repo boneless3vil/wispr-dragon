@@ -10,6 +10,16 @@ from .dictionary import UserDictionary
 
 logger = logging.getLogger(__name__)
 
+# Common English words that should never be auto-capitalized
+# even if they appear in the custom words dictionary
+STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "not", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "up", "as", "is", "are", "was", "were", "be",
+    "been", "being", "have", "has", "had", "do", "does", "did", "will", "would",
+    "could", "should", "may", "might", "must", "can", "than", "then", "that",
+    "this", "these", "those", "i", "you", "he", "she", "it", "we", "they",
+}
+
 # Built-in formatting commands for dictation mode
 FORMATTING_RULES = {
     "period": ".",
@@ -128,9 +138,12 @@ class PostProcessor:
         return text
 
     def _apply_capitalization_rules(self, text: str) -> str:
-        """Auto-capitalize proper nouns from the dictionary."""
+        """Auto-capitalize proper nouns from the dictionary.
+
+        Skip common English stopwords to avoid over-capitalization.
+        """
         for word in self.dictionary.custom_words:
-            if word[0].isupper():
-                pattern = re.compile(r"\b" + re.escape(word.lower()) + r"\b")
+            if word[0].isupper() and word.lower() not in STOPWORDS:
+                pattern = re.compile(r"\b" + re.escape(word.lower()) + r"\b", re.IGNORECASE)
                 text = pattern.sub(word, text)
         return text

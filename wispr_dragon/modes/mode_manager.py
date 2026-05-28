@@ -31,11 +31,12 @@ class ModeManager:
     regardless of the current mode.
     """
 
-    def __init__(self):
+    def __init__(self, macro_runner=None):
         self._mode = Mode.DICTATION
         self._handlers: dict[str, Callable] = {}
         self._undo_buffer: list[str] = []
         self._max_undo = 20
+        self._macro_runner = macro_runner
 
     @property
     def mode(self) -> Mode:
@@ -76,6 +77,14 @@ class ModeManager:
     def _handle_command(self, text: str) -> Optional[str]:
         """Handle text in command mode."""
         from .command_mode import match_command
+
+        # Check for macros first
+        if self._macro_runner:
+            macro = self._macro_runner.find_macro(text)
+            if macro:
+                return self._execute_action("macro", text, {"macro": macro})
+
+        # Fall back to built-in commands
         action = match_command(text)
         if action:
             return self._execute_action(action["action"], text, action.get("args"))

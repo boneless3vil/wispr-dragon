@@ -20,6 +20,11 @@ class TextInjector:
         if method == "auto":
             self._method = self._detect_method()
 
+    @property
+    def method(self) -> str:
+        """The active injection backend after auto-detection."""
+        return self._method
+
     def _detect_method(self) -> str:
         if shutil.which("xdotool"):
             return "xdotool"
@@ -27,6 +32,10 @@ class TextInjector:
             return "clipboard"
         if shutil.which("wl-copy"):
             return "wl-clipboard"
+        # WSL fallback: send text to the Windows clipboard via the built-in
+        # clip.exe interop binary. User pastes manually with Ctrl+V.
+        if shutil.which("clip.exe"):
+            return "clip.exe"
         logger.warning("No text injection method available")
         return "print"
 
@@ -38,6 +47,8 @@ class TextInjector:
             self._inject_clipboard_x11(text)
         elif self._method == "wl-clipboard":
             self._inject_clipboard_wayland(text)
+        elif self._method == "clip.exe":
+            self._inject_clip_exe(text)
         else:
             print(text, end="", flush=True)
 
@@ -83,17 +94,51 @@ class TextInjector:
             logger.error("Wayland clipboard injection failed: %s", e)
             print(text, end="", flush=True)
 
+    def _inject_clip_exe(self, text: str) -> None:
+        """Pipe text to Windows clipboard via the clip.exe interop binary.
+
+        Note: this only puts text on the clipboard; the user must press Ctrl+V
+        in their target Windows app to paste. Auto-paste from WSL into Windows
+        requires a Windows-side companion process and is out of scope here.
+
+        clip.exe expects UTF-16 LE on stdin to handle non-ASCII reliably; UTF-8
+        works for ASCII-only text but mangles things like curly quotes.
+        """
+        try:
+            proc = subprocess.Popen(["clip.exe"], stdin=subprocess.PIPE)
+            proc.communicate(text.encode("utf-16-le"))
+            logger.info("Text copied to Windows clipboard — press Ctrl+V to paste")
+        except FileNotFoundError:
+            logger.error("clip.exe not found, falling back to print")
+            print(text, end="", flush=True)
+        except Exception as e:
+            logger.error("clip.exe injection failed: %s", e)
+            print(text, end="", flush=True)
+
     def undo(self, text: str) -> None:
-        """Undo the last injected text by sending backspaces."""
+        """Undo the last injected text by sending backspaces.
+
+        Handles newlines specially - sends Delete key for newlines,
+        BackSpace for regular characters.
+        """
         if self._method in ("xdotool", "clipboard", "wl-clipboard"):
-            count = len(text)
-            if count == 0:
+            if not text:
                 return
+
             try:
-                subprocess.run(
-                    ["xdotool", "key", "--clearmodifiers",
-                     "--repeat", str(count), "BackSpace"],
-                    timeout=10,
-                )
+                newline_count = text.count('\n')
+                regular_count = len(text) - newline_count
+
+                keys = []
+                if regular_count > 0:
+                    keys.extend(["--repeat", str(regular_count), "BackSpace"])
+                if newline_count > 0:
+                    keys.extend(["--repeat", str(newline_count), "Delete"])
+
+                if keys:
+                    subprocess.run(
+                        ["xdotool", "key", "--clearmodifiers"] + keys,
+                        timeout=10,
+                    )
             except Exception as e:
                 logger.error("Undo failed: %s", e)

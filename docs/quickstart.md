@@ -1,12 +1,12 @@
-# Wispr Dragon Quick Start
+# Wispr_Dragon Quick Start
 
 ## 5-Minute Setup
 
 ### 1. Clone and Install
 ```bash
-cd wispr-dragon
+cd wispr_dragon
 conda env create -f environment.yml
-conda activate wispr-dragon
+conda activate wispr_dragon
 pip install -e .
 ```
 
@@ -17,7 +17,7 @@ python scripts/test_audio.py
 
 ### 3. Run
 ```bash
-wispr-dragon
+wispr_dragon
 ```
 
 ---
@@ -33,7 +33,7 @@ export OPENAI_API_KEY="sk-..."
 ```
 
 ### 3. Configure
-Create `~/.wispr-dragon/config.yaml`:
+Create `~/.wispr_dragon/config.yaml`:
 ```yaml
 engine:
   backend: openai-api
@@ -149,8 +149,8 @@ wispr-dragon/
 │   ├── test_integration.py # Full integration
 │   └── test_transcription.py
 ├── README.md               # Full documentation
-├── SETUP_OPENAI_API.md     # API setup guide
-└── QUICKSTART.md           # This file
+├── docs/setup-openai.md    # API setup guide
+└── docs/quickstart.md      # This file
 ```
 
 ---
@@ -166,7 +166,7 @@ wispr-dragon/
    - Local: Fast, free, needs GPU
    - Cloud: Accurate, costs money, simple setup
 
-3. **[Configure](#using-openai-api-gpt-55-support)** `~/.wispr-dragon/config.yaml`
+3. **[Configure](#using-openai-api-gpt-55-support)** `~/.wispr_dragon/config.yaml`
 
 4. **[Run](#run)** and start using!
 
@@ -178,7 +178,7 @@ wispr-dragon/
 - `wispr_dragon/engine/openai_api_engine.py` - OpenAI API engine with GPT 5.5 support
 - `scripts/test_integration.py` - Integration test suite
 - `README.md` - Full documentation
-- `SETUP_OPENAI_API.md` - API setup guide
+- `docs/setup-openai.md` - API setup guide
 
 ### Modified Files
 - `wispr_dragon/main.py` - Added OpenAI API engine support
@@ -226,7 +226,7 @@ audio:
 ## Support
 
 - **Documentation**: See README.md
-- **Setup Help**: See SETUP_OPENAI_API.md
+- **Setup Help**: See [docs/setup-openai.md](setup-openai.md)
 - **Issues**: Open a GitHub issue
 - **Questions**: Check the docs first!
 

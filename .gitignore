@@ -61,8 +61,8 @@ htmlcov/
 .hypothesis/
 
 # User Configuration
-~/.wispr-dragon/
-.wispr-dragon/
+~/.wispr_dragon/
+.wispr_dragon/
 
 # Large Model Files (git lfs should be used if tracking)
 *.pt
@@ -107,3 +107,9 @@ wispr_dragon_old/
 wispr-dragon-old/
 *.backup
 *.old
+
+# Dev scratch notes (local reference, not tracked)
+docs/dev-notes/
+
+# VS Code workspace files (machine-specific)
+*.code-workspace

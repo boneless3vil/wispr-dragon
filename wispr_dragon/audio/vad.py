@@ -23,12 +23,14 @@ class VoiceActivityDetector:
         silence_duration_ms: int = 500,
         min_speech_duration_ms: int = 250,
         speech_pad_ms: int = 100,
+        max_buffer_seconds: int = 30,
     ):
         self.sample_rate = sample_rate
         self.threshold = threshold
         self.silence_samples = int(sample_rate * silence_duration_ms / 1000)
         self.min_speech_samples = int(sample_rate * min_speech_duration_ms / 1000)
         self.speech_pad_samples = int(sample_rate * speech_pad_ms / 1000)
+        self.max_buffer_samples = int(sample_rate * max_buffer_seconds)
 
         self._model = None
         self._speech_buffer: list[np.ndarray] = []
@@ -87,14 +89,29 @@ class VoiceActivityDetector:
                 self._speech_buffer.append(window.numpy())
 
                 if self._silence_counter >= self.silence_samples:
-                    # Speech segment complete
+                    # Speech segment complete. Silero is a streaming RNN — its
+                    # hidden state must be cleared between segments or the next
+                    # one's confidence scores skew based on the previous segment.
                     segment = np.concatenate(self._speech_buffer)
                     self._speech_buffer.clear()
                     self._is_speaking = False
                     self._silence_counter = 0
+                    self._model.reset_states()
 
                     if len(segment) >= self.min_speech_samples:
                         return segment
+
+            # Guard against infinite buffer growth
+            buffer_size = sum(len(chunk) for chunk in self._speech_buffer)
+            if buffer_size > self.max_buffer_samples and self._is_speaking:
+                logger.warning("VAD buffer exceeded max size, flushing")
+                segment = np.concatenate(self._speech_buffer)
+                self._speech_buffer.clear()
+                self._is_speaking = False
+                self._silence_counter = 0
+                self._model.reset_states()
+                if len(segment) >= self.min_speech_samples:
+                    return segment
 
         return None
 

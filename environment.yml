@@ -1,4 +1,4 @@
-name: wispr-dragon
+name: wispr_dragon
 channels:
   - conda-forge
   - pytorch
@@ -10,6 +10,7 @@ dependencies:
   - pip:
     - faster-whisper>=1.1.0
     - openai-whisper>=20240930
+    - torchaudio
     - sounddevice>=0.5
     - numpy
     - PyQt6>=6.7

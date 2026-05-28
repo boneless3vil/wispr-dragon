@@ -36,7 +36,7 @@ class FasterWhisperEngine(TranscriptionEngine):
         if device == "auto":
             device = self._detect_device()
         if compute_type == "auto":
-            compute_type = "float16" if device == "cuda" else "int8"
+            compute_type = "float16" if device in ("cuda", "rocm") else "int8"
 
         logger.info(
             "Loading faster-whisper model=%s device=%s compute_type=%s",
@@ -97,7 +97,7 @@ class FasterWhisperEngine(TranscriptionEngine):
         try:
             import torch
             if torch.cuda.is_available():
-                return "cuda"
+                return "cuda"  # faster-whisper uses CUDA API for both NVIDIA and AMD
         except ImportError:
             pass
         return "cpu"

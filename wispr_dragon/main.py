@@ -1,16 +1,22 @@
 """Wispr-Dragon main entry point."""
 
 import argparse
+import asyncio
+import getpass
 import logging
+import re
 import signal
+import subprocess
 import sys
-
-import numpy as np
+from pathlib import Path
 
 from .config import Config
 from .correction.dictionary import UserDictionary
 from .correction.hotwords import HotwordManager
 from .correction.post_processor import PostProcessor
+from .engine import create_engine
+from .macros.macro_runner import MacroRunner
+from .macros.security import SecurityPolicy
 from .modes.mode_manager import ModeManager, Mode
 from .output.text_injector import TextInjector
 
@@ -26,48 +32,217 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
-def create_engine(config: Config):
-    """Create the appropriate transcription engine based on config and availability."""
-    backend = config.engine.backend
+def _handle_sign_script(script_name: str, user_dir) -> int:
+    """Sign a Python script."""
+    scripts_dir = user_dir / "scripts"
+    script_path = scripts_dir / script_name
 
-    if backend == "auto":
-        # Try faster-whisper first, fall back to openai-whisper, then openai-api
-        from .engine.faster_whisper_engine import FasterWhisperEngine
-        engine = FasterWhisperEngine()
-        if engine.is_available():
-            logger.info("Using faster-whisper engine")
-            return engine
-
-        from .engine.openai_whisper_engine import OpenAIWhisperEngine
-        engine = OpenAIWhisperEngine()
-        if engine.is_available():
-            logger.info("Using openai-whisper engine (fallback)")
-            return engine
-
-        from .engine.openai_api_engine import OpenAIAPIEngine
-        engine = OpenAIAPIEngine()
-        if engine.is_available():
-            logger.info("Using openai-api engine (fallback)")
-            return engine
-
-        logger.error("No transcription engine available. Install faster-whisper, openai-whisper, or set OPENAI_API_KEY.")
-        sys.exit(1)
-
-    elif backend == "faster-whisper":
-        from .engine.faster_whisper_engine import FasterWhisperEngine
-        return FasterWhisperEngine()
-
-    elif backend == "openai-whisper":
-        from .engine.openai_whisper_engine import OpenAIWhisperEngine
-        return OpenAIWhisperEngine()
-
-    elif backend == "openai-api":
-        from .engine.openai_api_engine import OpenAIAPIEngine
-        return OpenAIAPIEngine()
-
+    security = SecurityPolicy(user_dir)
+    if security.sign_script(script_path):
+        print(f"✓ Script signed: {script_name}")
+        return 0
     else:
-        logger.error("Unknown engine backend: %s", backend)
-        sys.exit(1)
+        print(f"✗ Failed to sign script: {script_name}")
+        return 1
+
+
+def _handle_admin_lock(user_dir) -> int:
+    """Enable admin lock with password."""
+    import bcrypt
+
+    password = getpass.getpass("Enter admin password: ")
+    confirm = getpass.getpass("Confirm password: ")
+
+    if password != confirm:
+        print("✗ Passwords do not match")
+        return 1
+
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+    policy = {
+        "allow_python_scripts": True,
+        "allow_yaml_macros": True,
+        "allow_program_launch": True,
+        "dictation_only": False,
+    }
+
+    security = SecurityPolicy(user_dir)
+    if security.set_admin_lock(password_hash, policy):
+        print("✓ Admin lock enabled")
+        return 0
+    else:
+        print("✗ Failed to set admin lock")
+        return 1
+
+
+def _handle_admin_unlock(user_dir) -> int:
+    """Disable admin lock."""
+    password = getpass.getpass("Enter admin password: ")
+
+    # Pass the plaintext password — remove_admin_lock verifies it against the
+    # stored hash with bcrypt.checkpw. Hashing here would produce a fresh salt
+    # that could never match the stored hash.
+    security = SecurityPolicy(user_dir)
+    if security.remove_admin_lock(password):
+        print("✓ Admin lock removed")
+        return 0
+    else:
+        print("✗ Admin password incorrect")
+        return 1
+
+
+def _handle_security_status(user_dir) -> int:
+    """Show current security policy."""
+    security = SecurityPolicy(user_dir)
+    print("\n=== Wispr-Dragon Security Status ===\n")
+
+    if security.is_locked():
+        print("Status: LOCKED (password-protected)")
+    else:
+        print("Status: UNLOCKED")
+
+    print(f"\nPolicy Settings:")
+    print(f"  Allow Python scripts:    {security.allows_python_scripts()}")
+    print(f"  Allow YAML macros:       {security.allows_yaml_macros()}")
+    print(f"  Allow program launch:    {security.allows_program_launch()}")
+    print(f"  Dictation-only mode:     {security.is_dictation_only()}")
+    print()
+
+    return 0
+
+
+def _handle_clear_trust(user_dir) -> int:
+    """Clear trusted programs/scripts."""
+    trust_file = user_dir / "trusted.json"
+    if trust_file.exists():
+        trust_file.unlink()
+        print("✓ Trusted programs/scripts cleared")
+        return 0
+    else:
+        print("✗ No trust manifest found")
+        return 1
+
+
+def _validate_keystroke(keys: str) -> bool:
+    """Validate keystroke string against whitelist.
+
+    Allowed: alphanumeric, +, -, _, and valid xdotool key names.
+    """
+    if not keys:
+        return False
+    return bool(re.match(r"^[a-zA-Z0-9+\-_]+$", keys))
+
+
+def _handle_server_mode(config: Config, print_key: bool = False) -> int:
+    """Launch WebSocket server for speech-to-text service."""
+    try:
+        from wispr_dragon.server.pipeline_runner import PipelineRunner
+        from wispr_dragon.server.websocket_server import WebSocketServer
+
+        if print_key:
+            if config.server.api_key:
+                print(f"API Key: {config.server.api_key}")
+            else:
+                import secrets
+                key = secrets.token_hex(16)
+                config.server.api_key = key
+                config.save()
+                print(f"Generated API Key: {key}")
+            return 0
+
+        logger.info("Starting server mode...")
+
+        pipeline = PipelineRunner(config)
+        if not pipeline.load(vad_enabled=True):
+            logger.error("Failed to load pipeline")
+            return 1
+
+        server = WebSocketServer(config, pipeline)
+
+        try:
+            asyncio.run(server.start())
+            return 0
+        except KeyboardInterrupt:
+            logger.info("Server stopped")
+            return 0
+
+    except ImportError as e:
+        logger.error("WebSocket dependencies not available: %s", e)
+        print("Install websockets: pip install websockets")
+        return 1
+    except Exception as e:
+        logger.error("Server mode failed: %s", e)
+        return 1
+
+
+def _handle_ui_mode(config: Config, inject_method: str = "auto") -> int:
+    """Launch floating dictation box UI."""
+    try:
+        from PyQt6.QtWidgets import QApplication
+
+        from .ui.ui_controller import UIController
+        from .correction.dictionary import UserDictionary
+        from .correction.post_processor import PostProcessor
+        from .output.text_injector import TextInjector
+
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        logger.info("Starting UI mode...")
+        dictionary = UserDictionary()
+        post_processor = PostProcessor(
+            dictionary,
+            fuzzy_threshold=config.correction.fuzzy_match_score,
+            auto_apply_threshold=config.correction.auto_apply_threshold,
+        )
+        text_injector = TextInjector(method=inject_method)
+        logger.info("Text injection method: %s", text_injector.method)
+
+        engine = create_engine(config)
+        logger.info("Loading model: %s", config.engine.model_size)
+        engine.load_model(
+            config.engine.model_size,
+            device=config.engine.device,
+            compute_type=config.engine.compute_type,
+        )
+        logger.info("Model loaded successfully")
+
+        # Load VAD so the worker can segment speech rather than re-transcribing
+        # a growing buffer every 100ms.
+        from .audio.vad import VoiceActivityDetector
+        vad = VoiceActivityDetector(
+            sample_rate=config.audio.sample_rate,
+            threshold=config.audio.vad_threshold,
+            silence_duration_ms=config.audio.silence_duration_ms,
+            min_speech_duration_ms=config.audio.min_speech_duration_ms,
+        )
+        vad.load()
+        logger.info("VAD loaded")
+
+        controller = UIController(
+            config,
+            config.user_dir,
+            engine,
+            vad=vad,
+            post_processor=post_processor,
+            text_injector=text_injector,
+        )
+
+        if not controller.start():
+            logger.error("Failed to start UI")
+            return 1
+
+        exit_code = app.exec()
+        controller.stop()
+        return exit_code
+
+    except ImportError as e:
+        logger.error("PyQt6 not available: %s", e)
+        return 1
+    except Exception as e:
+        logger.error("UI mode failed: %s", e)
+        return 1
+
+
 
 
 def create_audio_source(config: Config):
@@ -94,18 +269,85 @@ def main():
     parser.add_argument("--config", type=str, help="Path to config file")
     parser.add_argument("--model", type=str, help="Override model size (e.g., small.en, medium.en, large-v3)")
     parser.add_argument("--device", type=str, help="Override device (cuda, cpu)")
+    parser.add_argument(
+        "--compute-type",
+        choices=["auto", "float16", "int8", "int8_float16", "bfloat16", "float32"],
+        help="Override compute type. int8_float16 halves VRAM use vs float16 — try it if a larger model thrashes.",
+    )
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        help="Override beam size. Higher = more accurate but slower (default 10).",
+    )
     parser.add_argument("--no-vad", action="store_true", help="Disable voice activity detection")
+    parser.add_argument("--dictation-only", action="store_true", help="Enable dictation-only mode (no macros)")
+
+    # Security admin commands
+    parser.add_argument("--sign-script", type=str, metavar="SCRIPT", help="Sign a Python script")
+    parser.add_argument("--admin-lock", action="store_true", help="Enable admin lock with password")
+    parser.add_argument("--admin-unlock", action="store_true", help="Disable admin lock (requires password)")
+    parser.add_argument("--security-status", action="store_true", help="Show current security policy")
+    parser.add_argument("--clear-trust", action="store_true", help="Clear trusted programs/scripts")
+
+    # Server mode
+    parser.add_argument("--server", action="store_true", help="Run as WebSocket server for remote clients")
+    parser.add_argument("--print-key", action="store_true", help="Print API key and exit")
+
+    # UI mode
+    parser.add_argument("--ui", action="store_true", help="Launch floating dictation box UI")
+
+    # Text injection backend (auto-detected by default)
+    parser.add_argument(
+        "--inject-method",
+        choices=["auto", "xdotool", "clipboard", "wl-clipboard", "clip.exe", "print"],
+        default="auto",
+        help=(
+            "Override text injection backend. 'xdotool' types into the focused X11/WSLg "
+            "window (Linux apps). 'clip.exe' copies to the Windows clipboard via WSL "
+            "interop (you press Ctrl+V to paste into a Windows app)."
+        ),
+    )
+
     args = parser.parse_args()
 
-    setup_logging(args.verbose)
-    logger.info("Wispr-Dragon starting...")
+    # Load config first
+    config = Config.load(Path(args.config) if args.config else None)
+    user_dir = config.user_dir
 
-    # Load config
-    config = Config.load()
+    # Handle admin commands (exit after executing)
+    if args.sign_script:
+        return _handle_sign_script(args.sign_script, user_dir)
+    if args.admin_lock:
+        return _handle_admin_lock(user_dir)
+    if args.admin_unlock:
+        return _handle_admin_unlock(user_dir)
+    if args.security_status:
+        return _handle_security_status(user_dir)
+    if args.clear_trust:
+        return _handle_clear_trust(user_dir)
+
+    setup_logging(args.verbose)
+
+    # Apply CLI overrides before any mode dispatches so --server and --ui honor them
     if args.model:
         config.engine.model_size = args.model
     if args.device:
         config.engine.device = args.device
+    if args.compute_type:
+        config.engine.compute_type = args.compute_type
+    if args.beam_size:
+        config.engine.beam_size = args.beam_size
+    if args.dictation_only:
+        config.security.dictation_only = True
+
+    # Handle server mode
+    if args.server:
+        return _handle_server_mode(config, print_key=args.print_key)
+
+    # Handle UI mode (launches floating dictation box)
+    if args.ui:
+        return _handle_ui_mode(config, inject_method=args.inject_method)
+    logger.info("Wispr-Dragon starting...")
 
     # Initialize components
     dictionary = UserDictionary()
@@ -115,8 +357,10 @@ def main():
         fuzzy_threshold=config.correction.fuzzy_match_score,
         auto_apply_threshold=config.correction.auto_apply_threshold,
     )
-    mode_mgr = ModeManager()
-    injector = TextInjector()
+    injector = TextInjector(method=args.inject_method)
+    logger.info("Text injection method: %s", injector.method)
+    macro_runner = MacroRunner(config.user_dir, text_injector=injector)
+    mode_mgr = ModeManager(macro_runner=macro_runner)
 
     # Load command grammar
     from .modes.command_mode import load_commands
@@ -158,14 +402,58 @@ def main():
         window.show(text)
 
     def handle_keystroke(text, args=None):
-        import subprocess
         keys = args.get("keys", "") if args else ""
-        if keys:
+        if not keys:
+            return
+        if not _validate_keystroke(keys):
+            logger.error("Invalid keystroke pattern: %s", keys)
+            return
+        try:
             subprocess.run(["xdotool", "key", "--clearmodifiers", keys], timeout=2)
+        except FileNotFoundError:
+            logger.error("xdotool not found")
+        except subprocess.TimeoutExpired:
+            logger.error("Keystroke command timed out")
+
+    def handle_macro(text, args=None):
+        """Handler for voice-triggered macros."""
+        if not args or "macro" not in args:
+            return
+
+        macro = args["macro"]
+        captured_args = macro.pop("_captured_args", None)
+
+        # If in dictation mode, show confirmation dialog
+        if mode_mgr.mode == Mode.DICTATION and not config.security.dictation_only:
+            from .ui.confirm_command import ConfirmationDialog
+
+            dialog = ConfirmationDialog(config.user_dir)
+            action = macro.get("action", "unknown")
+            target = macro.get("program") or macro.get("script")
+
+            choice = dialog.show_and_ask(text, macro.get("trigger", ""), action, target)
+
+            if choice == "no":
+                # User wants to type it instead
+                return text
+            elif choice == "trust" and target:
+                # Add to trust list and execute
+                is_script = action == "python_script"
+                dialog.trust_manifest.add_trust(target, is_script=is_script)
+                return macro_runner.execute(macro, captured_args)
+            elif choice is None:
+                # User cancelled
+                return None
+            # choice == "yes": fall through to execute
+
+        success = macro_runner.execute(macro, captured_args)
+        logger.debug("Macro execution: %s", "success" if success else "failed")
+        return None
 
     mode_mgr.register_handler("undo_last", handle_undo)
     mode_mgr.register_handler("open_correction_window", handle_correction)
     mode_mgr.register_handler("keystroke", handle_keystroke)
+    mode_mgr.register_handler("macro", handle_macro)
 
     # Signal handling
     running = True
@@ -205,7 +493,7 @@ def main():
                 beam_size=config.engine.beam_size,
             )
 
-            if not result.text.strip():
+            if not result or not result.text.strip():
                 continue
 
             # Post-process
