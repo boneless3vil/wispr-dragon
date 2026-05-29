@@ -113,3 +113,7 @@ docs/dev-notes/
 
 # VS Code workspace files (machine-specific)
 *.code-workspace
+
+# Claude Code — personal / machine-specific (agents/ and commands/ stay shared)
+.claude/settings.local.json
+.claude/*.local.json
