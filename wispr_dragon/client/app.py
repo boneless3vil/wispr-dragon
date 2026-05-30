@@ -141,7 +141,20 @@ class WisprDragonClient:
             audio_task = asyncio.create_task(self.audio_capture.start(self.audio_queue))
             client_task = asyncio.create_task(self.ws_client.run(self.audio_queue))
 
-            await asyncio.gather(audio_task, client_task)
+            # Stop as soon as EITHER task ends — e.g. the WebSocket client giving
+            # up after an auth failure. Using gather() here would keep waiting on
+            # the (endless) audio task, so the process never shut down and the
+            # tray icon lingered. FIRST_COMPLETED + teardown guarantees shutdown.
+            done, pending = await asyncio.wait(
+                {audio_task, client_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            self._running = False
+            self.audio_capture.stop()
+            self.ws_client.stop()
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(audio_task, client_task, return_exceptions=True)
 
         except KeyboardInterrupt:
             logger.info("Client stopped by user")
@@ -204,7 +217,7 @@ class WisprDragonClient:
         """Mic gate change — runs on the asyncio event loop thread."""
         if active:
             self.audio_capture.set_paused(False)
-            logger.debug("Mic ON")
+            logger.info("🎤 Recording ON — speak now")
         else:
             # Inject a brief tail of silence so the server's VAD flushes the
             # last segment instead of leaving it buffered.
@@ -214,7 +227,7 @@ class WisprDragonClient:
                 except asyncio.QueueFull:
                     break
             self.audio_capture.set_paused(True)
-            logger.debug("Mic OFF (flushed VAD)")
+            logger.info("Recording OFF")
         if self.tray is not None:
             self.tray.update_recording_state(active)
 
