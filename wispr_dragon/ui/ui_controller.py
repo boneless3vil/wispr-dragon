@@ -438,19 +438,96 @@ class UIController:
         self.macro_runner.execute(macro, captured)
 
     def _send_keystroke(self, keys: str):
-        """Send a validated keystroke via xdotool (Linux/WSLg X11 path)."""
+        """Send a validated keystroke, dispatching per platform.
+
+        ``keys`` is an xdotool-style chord: modifiers and a final key joined by
+        ``+`` (e.g. ``ctrl+s``, ``alt+Tab``, ``Return``, ``a``). Platform paths:
+
+        * Linux (``linux``): xdotool, the existing X11/WSLg path (unchanged).
+          Wayland support via ydotool is a TODO (consistent with CLAUDE.md;
+          ydotool needs uinput permission, mirroring the injector setup notes).
+        * Windows (``win32``) / macOS (``darwin``): pynput, already a client
+          dependency (see ``client/hotkey.py``), so we don't shell out to
+          xdotool which doesn't exist there. macOS additionally needs
+          Accessibility permission for synthesized input to land.
+        """
         import re
-        import subprocess
 
         if not keys or not re.match(r"^[a-zA-Z0-9+\-_]+$", keys):
             logger.error("Invalid keystroke pattern: %s", keys)
             return
+
+        if sys.platform == "linux":
+            self._send_keystroke_xdotool(keys)
+        else:
+            # win32 + darwin both route through pynput.
+            self._send_keystroke_pynput(keys)
+
+    def _send_keystroke_xdotool(self, keys: str):
+        """Linux/WSLg X11 keystroke via xdotool (TODO: ydotool for Wayland)."""
+        import subprocess
+
         try:
             subprocess.run(["xdotool", "key", "--clearmodifiers", keys], timeout=2)
         except FileNotFoundError:
             logger.error("xdotool not found")
         except subprocess.TimeoutExpired:
             logger.error("Keystroke command timed out")
+
+    # xdotool key names -> pynput special keys. Bare single characters and
+    # digits aren't listed: they map to KeyCode.from_char directly. Names not
+    # found here and longer than one char can't be sent and are warned about.
+    _PYNPUT_KEY_MAP = {
+        "ctrl": "ctrl", "control": "ctrl", "alt": "alt", "shift": "shift",
+        "super": "cmd", "meta": "cmd", "cmd": "cmd", "win": "cmd",
+        "return": "enter", "enter": "enter", "tab": "tab", "escape": "esc",
+        "esc": "esc", "space": "space", "backspace": "backspace",
+        "delete": "delete", "home": "home", "end": "end", "page_up": "page_up",
+        "page_down": "page_down", "up": "up", "down": "down", "left": "left",
+        "right": "right",
+        **{f"f{n}": f"f{n}" for n in range(1, 13)},
+    }
+
+    def _send_keystroke_pynput(self, keys: str):
+        """Windows/macOS keystroke via pynput (no native key tool to shell to)."""
+        try:
+            from pynput import keyboard  # lazy: keep module importable on CI
+        except ImportError:
+            logger.error("pynput unavailable; cannot send keystroke %r", keys)
+            return
+
+        def resolve(token: str):
+            low = token.lower()
+            mapped = self._PYNPUT_KEY_MAP.get(low)
+            if mapped is not None:
+                return getattr(keyboard.Key, mapped)
+            if len(token) == 1:
+                return keyboard.KeyCode.from_char(token)
+            return None
+
+        # The last token is the actual key; everything before it is a modifier.
+        parts = keys.split("+")
+        resolved = [resolve(t) for t in parts]
+        if any(r is None for r in resolved):
+            unmapped = [t for t, r in zip(parts, resolved) if r is None]
+            logger.warning(
+                "Cannot map keystroke %r on %s (unmapped: %s)",
+                keys, sys.platform, ", ".join(unmapped),
+            )
+            return
+
+        modifiers = resolved[:-1]
+        main_key = resolved[-1]
+        controller = keyboard.Controller()
+        try:
+            for mod in modifiers:
+                controller.press(mod)
+            controller.press(main_key)
+            controller.release(main_key)
+            for mod in reversed(modifiers):
+                controller.release(mod)
+        except Exception as e:
+            logger.error("pynput keystroke %r failed: %s", keys, e)
 
     def _on_text_ready(self, text: str):
         """Callback from DictationBox when user clicks Post."""

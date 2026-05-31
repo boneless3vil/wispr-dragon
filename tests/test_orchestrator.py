@@ -58,6 +58,31 @@ def test_scratch_that_invokes_undo_handler_and_is_consumed():
     assert undone == ["first phrase"]
 
 
+def test_scratch_that_undoes_spelling_and_numbers_segments():
+    """Single source of truth: every rendered segment is undoable.
+
+    SPELLING/NUMBERS output is appended to the dictation box just like
+    DICTATION output, so the undo buffer must track those modes too —
+    otherwise "scratch that" no-ops while a segment is still on screen.
+    """
+    _, mm, orch = _make()
+    undone = []
+    mm.register_handler("undo_last", lambda text: undone.append(text))
+
+    orch.handle_transcript("start spelling")
+    assert mm.mode == Mode.SPELLING
+    out = orch.handle_transcript("a b c")  # renders a segment
+    assert out.has_text
+    orch.handle_transcript("scratch that")
+    assert len(undone) == 1  # handler fired -> box segment will be popped
+
+    orch.handle_transcript("start numbers")
+    assert mm.mode == Mode.NUMBERS
+    orch.handle_transcript("forty two")  # renders a segment
+    orch.handle_transcript("scratch that")
+    assert len(undone) == 2
+
+
 def test_correction_command_dispatches_handler():
     _, mm, orch = _make()
     corrected = []

@@ -96,7 +96,10 @@ class ModeManager:
         if self._mode == Mode.COMMAND:
             return self._handle_command(text)
 
-        # Dictation mode: return text for output
+        # Any output-producing mode (DICTATION, SPELLING, NUMBERS) renders a
+        # segment to the box, so every one must be tracked here — otherwise the
+        # undo buffer and the box's segment list desync and "scratch that"
+        # no-ops while a segment is still visible.
         self._undo_buffer.append(text)
         if len(self._undo_buffer) > self._max_undo:
             self._undo_buffer.pop(0)
