@@ -6,16 +6,17 @@
 ;
 ; Build the PyInstaller bundle first (see packaging/README.md), then compile:
 ;   ISCC.exe /DSourceDir="C:\Users\<you>\wd_build\dist\WisprDragonClient" packaging\wispr_dragon_client.iss
-; The default SourceDir below matches the README's build path.
+; The default SourceDir below is a neutral placeholder; the README builds to
+; $HOME\wd_build, so always pass /DSourceDir to match your actual bundle path.
 
 #define MyAppName "Wispr Dragon Client"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "Jonathan Baldwin"
 #define MyAppExeName "WisprDragonClient.exe"
 
-; Override at compile time with /DSourceDir=...; default = README build path.
+; Override at compile time with /DSourceDir=...; default is a neutral placeholder.
 #ifndef SourceDir
-  #define SourceDir "C:\Users\JonathanBaldwin\wd_build\dist\WisprDragonClient"
+  #define SourceDir "C:\wd_build\dist\WisprDragonClient"
 #endif
 
 [Setup]
