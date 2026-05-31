@@ -15,9 +15,10 @@ from PyQt6.QtWidgets import (
 
 logger = logging.getLogger(__name__)
 
-# Accent colors — also used at runtime to recolor the record-state dot.
-_ACCENT = "#436547"   # sage green: recording
-_IDLE = "#9ca3af"     # gray: idle
+# Accent colors — also used at runtime to recolor the mic-state dot.
+_ACCENT = "#436547"   # sage green: HOT (recording)
+_IDLE = "#9ca3af"     # gray: OFF (idle)
+_STANDBY = "#d97706"  # amber: STANDBY (asleep — "wake up" to resume)
 
 # Clean light theme, applied as a Qt style sheet on the window so it overrides
 # the OS default widget palette. Keep selectors object-name scoped so the
@@ -39,6 +40,14 @@ QLabel#statusDot {
 QLabel#timerLabel {
     color: #6b7280;
     font-size: 12px;
+}
+QLabel#hintLabel {
+    color: #b45309;
+    font-size: 11px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+    padding: 5px 8px;
 }
 QTextEdit#transcript {
     background: #f9fafb;
@@ -99,8 +108,15 @@ class DictationBox(QObject):
     # the GUI thread (queued connection) so widget mutation is thread-safe.
     transcription_updated = pyqtSignal(str, str)  # live, final (empty string = no final)
     status_message_changed = pyqtSignal(str)
+    segment_pop_requested = pyqtSignal()  # "scratch that" -> drop the last segment
+    # Deferred GUI-thread action requested from a worker thread. payload depends on
+    # the action: "correct" -> ignored (operates on the last segment);
+    # "macro" -> dict {"macro": ..., "text": ...}. Connected by UIController.
+    ui_action_requested = pyqtSignal(str, object)
+    mic_state_changed = pyqtSignal(object)  # MicState — repaint the dot on GUI thread
 
-    def __init__(self, config, user_dir: Path, on_text_ready=None, parent=None):
+    def __init__(self, config, user_dir: Path, on_text_ready=None, parent=None,
+                 on_toggle_mic=None):
         """Initialize dictation box.
 
         Args:
@@ -108,12 +124,20 @@ class DictationBox(QObject):
             user_dir: User config directory (~/.wispr_dragon)
             on_text_ready: Callback when text is ready to post (receives text)
             parent: Parent widget (usually None for top-level window)
+            on_toggle_mic: Callback when the Mic button toggles capture
+                (receives paused: bool). Wired by UIController to gate audio.
         """
         super().__init__()
         self.config = config
         self.user_dir = user_dir
         self.on_text_ready = on_text_ready
+        self.on_toggle_mic = on_toggle_mic
+        self._mic_paused = False
         self.is_recording = False
+        # Completed VAD segments accumulate here. final_text is their " "-join;
+        # tracking them as a list lets "scratch that" drop the last one and
+        # "correct that" replace it.
+        self.segments: list[str] = []
         self.final_text = ""
         self.live_text = ""
 
@@ -160,6 +184,14 @@ class DictationBox(QObject):
         layout.addLayout(header)
         self._set_recording_state(False)
 
+        # Backend hint — hidden unless UIController sets it (e.g. to warn that
+        # the xdotool backend can't reach native Windows apps).
+        self.hint_label = QLabel("")
+        self.hint_label.setObjectName("hintLabel")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setVisible(False)
+        layout.addWidget(self.hint_label)
+
         # Transcription display (read-only)
         self.text_display = QTextEdit()
         self.text_display.setObjectName("transcript")
@@ -171,6 +203,11 @@ class DictationBox(QObject):
         # Button layout
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
+
+        self.mic_btn = QPushButton("Pause Mic")
+        self.mic_btn.setObjectName("micButton")
+        self.mic_btn.clicked.connect(self.toggle_mic)
+        button_layout.addWidget(self.mic_btn)
 
         self.post_btn = QPushButton("Post  ↵")
         self.post_btn.setObjectName("postButton")
@@ -201,14 +238,47 @@ class DictationBox(QObject):
         # mutation happens on the GUI thread.
         self.transcription_updated.connect(self._apply_transcription_update)
         self.status_message_changed.connect(self._apply_status_message)
+        self.segment_pop_requested.connect(self._pop_last_segment)
+        self.mic_state_changed.connect(self._apply_mic_state)
+        # Deferred actions are dispatched through this QObject (GUI thread) so the
+        # worker-thread emit is delivered via a queued connection. The actual
+        # handler is supplied by UIController via set_ui_action_handler().
+        self._ui_action_handler = None
+        self.ui_action_requested.connect(self._dispatch_ui_action)
 
     def _set_recording_state(self, recording: bool) -> None:
-        """Update the header dot + label to reflect recording state."""
-        self.is_recording = recording
-        if recording:
+        """Update the header dot + label for the binary recording on/off case.
+
+        Thin wrapper over the three-state mic indicator: recording maps to HOT,
+        not-recording to OFF. STANDBY is reached only via set_mic_state().
+        """
+        from .mic_state import MicState
+        self._paint_mic_state(MicState.HOT if recording else MicState.OFF)
+
+    def set_mic_state(self, state) -> None:
+        """Thread-safe: update the mic-state indicator (OFF/STANDBY/HOT).
+
+        Callable from any thread (mode changes fire on the worker thread); the
+        repaint is marshaled to the GUI thread via a queued signal.
+        """
+        self.mic_state_changed.emit(state)
+
+    @pyqtSlot(object)
+    def _apply_mic_state(self, state) -> None:
+        """Slot — runs on the GUI thread."""
+        self._paint_mic_state(state)
+
+    def _paint_mic_state(self, state) -> None:
+        """Recolor the dot + label for the given MicState (GUI thread)."""
+        from .mic_state import MicState
+        self.is_recording = state != MicState.OFF
+        if state == MicState.HOT:
             self.status_dot.setStyleSheet(f"color: {_ACCENT};")
             self.status_text.setText("Recording")
-        else:
+        elif state == MicState.STANDBY:
+            self.status_dot.setStyleSheet(f"color: {_STANDBY};")
+            self.status_text.setText("Standby")
+        else:  # OFF
             self.status_dot.setStyleSheet(f"color: {_IDLE};")
             self.status_text.setText("Idle")
 
@@ -221,6 +291,42 @@ class DictationBox(QObject):
     def show_status(self, msg: str) -> None:
         """Thread-safe status bar update — callable from any thread."""
         self.status_message_changed.emit(msg)
+
+    def set_ui_action_handler(self, handler) -> None:
+        """Register the callback that handles deferred UI actions.
+
+        Invoked on the GUI thread (via the queued ui_action_requested signal)
+        with (action: str, payload). UIController supplies it so QDialogs are
+        only ever constructed on the GUI thread.
+        """
+        self._ui_action_handler = handler
+
+    @pyqtSlot(str, object)
+    def _dispatch_ui_action(self, action: str, payload) -> None:
+        """Slot — runs on the GUI thread regardless of emitter thread."""
+        if self._ui_action_handler:
+            self._ui_action_handler(action, payload)
+
+    def toggle_mic(self) -> None:
+        """Pause/resume audio capture without ending the session (Mic button)."""
+        self._mic_paused = not self._mic_paused
+        self.mic_btn.setText("Resume Mic" if self._mic_paused else "Pause Mic")
+        if self.on_toggle_mic:
+            self.on_toggle_mic(self._mic_paused)
+        self.status_bar.showMessage("Mic paused" if self._mic_paused else "Mic live")
+
+    def set_backend_hint(self, message: str) -> None:
+        """Show (or clear) a persistent hint line under the header.
+
+        Used by UIController to warn, e.g., that the xdotool backend can't reach
+        native Windows apps. Empty message hides the line.
+        """
+        if message:
+            self.hint_label.setText(message)
+            self.hint_label.setVisible(True)
+        else:
+            self.hint_label.clear()
+            self.hint_label.setVisible(False)
 
     @pyqtSlot(str)
     def _apply_status_message(self, msg: str) -> None:
@@ -249,19 +355,21 @@ class DictationBox(QObject):
     @pyqtSlot(str, str)
     def _apply_transcription_update(self, live: str, final: str):
         """Slot — runs on the GUI thread regardless of emitter thread."""
-        import html
-
         if final:
             logger.info("Slot received final: %r (total len %d)", final[:80], len(self.final_text) + len(final))
             # Each `final` carries one completed VAD segment. Append to the
             # running transcript so multi-segment dictation accumulates.
-            if self.final_text:
-                self.final_text = f"{self.final_text} {final}"
-            else:
-                self.final_text = final
+            self.segments.append(final)
+            self.final_text = " ".join(self.segments)
             self.live_text = ""
         else:
             self.live_text = live
+
+        self._render()
+
+    def _render(self) -> None:
+        """Repaint the transcript display from segments + live hypothesis."""
+        import html
 
         # Display format: final text + grayed live text. Escape user content so
         # transcribed angle brackets etc. render literally rather than as tags.
@@ -275,6 +383,34 @@ class DictationBox(QObject):
         self.text_display.setHtml(display)
         self.status_bar.showMessage(f"Recording... ({len(self.final_text)} chars)")
 
+    def remove_last_segment(self) -> None:
+        """Thread-safe: drop the most recent segment (handles 'scratch that')."""
+        self.segment_pop_requested.emit()
+
+    @pyqtSlot()
+    def _pop_last_segment(self) -> None:
+        """Slot — runs on the GUI thread. Remove the last accepted segment."""
+        if self.segments:
+            self.segments.pop()
+            self.final_text = " ".join(self.segments)
+            self.live_text = ""
+            self._render()
+            self.status_bar.showMessage("Scratched last phrase")
+
+    def last_segment(self) -> str:
+        """Return the most recent segment text, or '' if none."""
+        return self.segments[-1] if self.segments else ""
+
+    def replace_last_segment(self, text: str) -> None:
+        """Replace the most recent segment (handles an applied correction).
+
+        Safe to call from the GUI thread only (correction runs there).
+        """
+        if self.segments:
+            self.segments[-1] = text
+            self.final_text = " ".join(self.segments)
+            self._render()
+
     def post_text(self):
         """Post the transcribed text to the active window."""
         text = self.final_text.strip()
@@ -282,8 +418,9 @@ class DictationBox(QObject):
             self.status_bar.showMessage("No text to post")
             return
 
-        # TODO: Check for command matches + show confirmation if needed
-        # For now, just post the text
+        # Commands ("scratch that", "correct that", macros, mode switches) are
+        # handled upstream by the orchestrator as they're spoken, so Post only
+        # ever sees finalized dictation text.
         if self.on_text_ready:
             self.on_text_ready(text)
 
@@ -294,6 +431,7 @@ class DictationBox(QObject):
 
     def clear_text(self):
         """Clear the current text and optionally restart recording."""
+        self.segments = []
         self.final_text = ""
         self.live_text = ""
         self.text_display.clear()

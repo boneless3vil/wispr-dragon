@@ -225,6 +225,7 @@ def _handle_ui_mode(config: Config, inject_method: str = "auto") -> int:
             vad=vad,
             post_processor=post_processor,
             text_injector=text_injector,
+            dictionary=dictionary,
         )
 
         if not controller.start():
@@ -455,6 +456,12 @@ def main():
     mode_mgr.register_handler("keystroke", handle_keystroke)
     mode_mgr.register_handler("macro", handle_macro)
 
+    # Shared text pipeline (post-process -> mode/command dispatch -> transform),
+    # reused by the floating dictation box so the two paths don't drift.
+    from .modes.orchestrator import DictationOrchestrator
+    from .modes.transforms import build_transformers
+    orchestrator = DictationOrchestrator(post_processor, mode_mgr, transformers=build_transformers())
+
     # Signal handling
     running = True
 
@@ -496,15 +503,11 @@ def main():
             if not result or not result.text.strip():
                 continue
 
-            # Post-process
-            apply_formatting = mode_mgr.mode == Mode.DICTATION
-            processed = post_processor.process(result.text, apply_formatting=apply_formatting)
-
-            # Handle through mode manager
-            output = mode_mgr.process_text(processed)
-            if output:
-                injector.inject(output + " ")
-                logger.debug("Output: %s", output)
+            # Post-process + route through modes/commands via the shared pipeline.
+            outcome = orchestrator.handle_transcript(result.text)
+            if outcome.has_text:
+                injector.inject(outcome.text + " ")
+                logger.debug("Output: %s", outcome.text)
 
     finally:
         audio_source.stop()

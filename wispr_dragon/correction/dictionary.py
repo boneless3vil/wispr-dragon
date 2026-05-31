@@ -109,6 +109,14 @@ class UserDictionary:
             self.custom_words.append(word)
             self._save()
 
+    def remove_custom_word(self, word: str) -> bool:
+        """Remove a custom word from the vocabulary. Returns True if removed."""
+        if word in self.custom_words:
+            self.custom_words.remove(word)
+            self._save()
+            return True
+        return False
+
     def add_phrase_replacement(self, original: str, replacement: str) -> None:
         """Add a phrase replacement rule."""
         self.phrase_replacements[original.lower()] = replacement

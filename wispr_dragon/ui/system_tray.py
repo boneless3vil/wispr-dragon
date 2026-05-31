@@ -15,6 +15,7 @@ class SystemTray:
         dictation_box,
         on_quit: Optional[Callable] = None,
         on_toggle: Optional[Callable] = None,
+        on_open_browser: Optional[Callable] = None,
     ):
         """Initialize system tray.
 
@@ -22,10 +23,14 @@ class SystemTray:
             dictation_box: DictationBox instance to control
             on_quit: Callback when user selects Quit
             on_toggle: Callback when user toggles recording on/off
+            on_open_browser: Callback to open the Commands & Vocabulary
+                browser. Wired by the caller (e.g. UIController) which owns the
+                user_dir and UserDictionary and constructs the MacroEditor.
         """
         self.dictation_box = dictation_box
         self.on_quit = on_quit
         self.on_toggle = on_toggle
+        self.on_open_browser = on_open_browser
         self.tray_widget = None
         self.menu = None
 
@@ -63,6 +68,11 @@ class SystemTray:
         self.toggle_action.triggered.connect(self._on_toggle_recording)
         self.menu.addAction(self.toggle_action)
 
+        # Commands & Vocabulary browser (Dragon-equivalent command browser)
+        browser_action = QAction("Commands & Vocabulary…", self.menu)
+        browser_action.triggered.connect(self._on_open_browser)
+        self.menu.addAction(browser_action)
+
         self.menu.addSeparator()
 
         # Quit action
@@ -78,7 +88,10 @@ class SystemTray:
         return True
 
     def set_recording_state(self, is_recording: bool) -> None:
-        """Update recording state display in tray menu.
+        """Update recording state display in tray menu (binary on/off).
+
+        Retained for callers that only track recording on/off; prefer
+        set_mic_state() for the full Dragon-style OFF/STANDBY/HOT model.
 
         Args:
             is_recording: True if recording active
@@ -86,6 +99,26 @@ class SystemTray:
         if self.toggle_action:
             state_text = "Recording: ON 🎙️" if is_recording else "Recording: OFF 🔇"
             self.toggle_action.setText(state_text)
+
+    def set_mic_state(self, state) -> None:
+        """Update the tray for a Dragon-style mic state (OFF/STANDBY/HOT).
+
+        Args:
+            state: a MicState value. Sets the menu label and tooltip; the
+                indicator is text/emoji since the tray icon is glyph-based.
+        """
+        from .mic_state import MicState
+
+        label, tooltip = {
+            MicState.HOT: ("Recording: ON 🎙️", "Wispr Dragon — listening (click to toggle)"),
+            MicState.STANDBY: ("Standby 💤 (say 'wake up')", "Wispr Dragon — asleep; say 'wake up'"),
+            MicState.OFF: ("Recording: OFF 🔇", "Wispr Dragon — mic off (click to toggle)"),
+        }.get(state, ("Recording: OFF 🔇", "Wispr Dragon"))
+
+        if self.toggle_action:
+            self.toggle_action.setText(label)
+        if self.tray_widget:
+            self.tray_widget.setToolTip(tooltip)
 
     def _on_show_clicked(self) -> None:
         """Handle Show Dictation Box action."""
@@ -102,6 +135,12 @@ class SystemTray:
         logger.debug("Toggle recording requested")
         if self.on_toggle:
             self.on_toggle()
+
+    def _on_open_browser(self) -> None:
+        """Handle Commands & Vocabulary action."""
+        logger.debug("Open Commands & Vocabulary browser requested")
+        if self.on_open_browser:
+            self.on_open_browser()
 
     def _on_quit_clicked(self) -> None:
         """Handle Quit action."""

@@ -11,6 +11,8 @@ class Mode(Enum):
     DICTATION = auto()
     COMMAND = auto()
     SLEEP = auto()
+    SPELLING = auto()
+    NUMBERS = auto()
 
 
 # Commands that work in ANY mode
@@ -21,6 +23,12 @@ ALWAYS_ON_COMMANDS = {
     "wake up": "wake_mode",
     "switch to command mode": "switch_command",
     "switch to dictation mode": "switch_dictation",
+    "start spelling": "switch_spelling",
+    "spelling mode": "switch_spelling",
+    "stop spelling": "switch_dictation",
+    "start numbers": "switch_numbers",
+    "numbers mode": "switch_numbers",
+    "stop numbers": "switch_dictation",
 }
 
 
@@ -37,6 +45,7 @@ class ModeManager:
         self._undo_buffer: list[str] = []
         self._max_undo = 20
         self._macro_runner = macro_runner
+        self._on_mode_change: Optional[Callable[["Mode"], None]] = None
 
     @property
     def mode(self) -> Mode:
@@ -45,6 +54,25 @@ class ModeManager:
     def register_handler(self, action: str, handler: Callable) -> None:
         """Register a handler function for a command action."""
         self._handlers[action] = handler
+
+    def set_mode_change_callback(self, callback: Optional[Callable[["Mode"], None]]) -> None:
+        """Register a callback fired with the new Mode whenever the mode changes.
+
+        Used to drive the mic-state indicator (sleep -> standby, wake -> hot).
+        Called on whatever thread processes the triggering utterance.
+        """
+        self._on_mode_change = callback
+
+    def _set_mode(self, mode: "Mode") -> None:
+        """Set the active mode and notify the mode-change callback on a change."""
+        if mode == self._mode:
+            return
+        self._mode = mode
+        if self._on_mode_change:
+            try:
+                self._on_mode_change(mode)
+            except Exception as e:
+                logger.error("Mode-change callback failed: %s", e)
 
     def process_text(self, text: str) -> Optional[str]:
         """Process transcribed text based on the current mode.
@@ -68,7 +96,10 @@ class ModeManager:
         if self._mode == Mode.COMMAND:
             return self._handle_command(text)
 
-        # Dictation mode: return text for output
+        # Any output-producing mode (DICTATION, SPELLING, NUMBERS) renders a
+        # segment to the box, so every one must be tracked here — otherwise the
+        # undo buffer and the box's segment list desync and "scratch that"
+        # no-ops while a segment is still visible.
         self._undo_buffer.append(text)
         if len(self._undo_buffer) > self._max_undo:
             self._undo_buffer.pop(0)
@@ -95,20 +126,28 @@ class ModeManager:
                         args: Optional[dict] = None) -> Optional[str]:
         """Execute a command action."""
         if action == "sleep_mode":
-            self._mode = Mode.SLEEP
+            self._set_mode(Mode.SLEEP)
             logger.info("Entering sleep mode")
             return None
         elif action == "wake_mode":
-            self._mode = Mode.DICTATION
+            self._set_mode(Mode.DICTATION)
             logger.info("Waking up to dictation mode")
             return None
         elif action == "switch_command":
-            self._mode = Mode.COMMAND
+            self._set_mode(Mode.COMMAND)
             logger.info("Switched to command mode")
             return None
         elif action == "switch_dictation":
-            self._mode = Mode.DICTATION
+            self._set_mode(Mode.DICTATION)
             logger.info("Switched to dictation mode")
+            return None
+        elif action == "switch_spelling":
+            self._set_mode(Mode.SPELLING)
+            logger.info("Switched to spelling mode")
+            return None
+        elif action == "switch_numbers":
+            self._set_mode(Mode.NUMBERS)
+            logger.info("Switched to numbers mode")
             return None
         elif action == "undo_last":
             if self._undo_buffer:

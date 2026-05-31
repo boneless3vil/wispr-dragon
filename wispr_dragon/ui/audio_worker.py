@@ -25,7 +25,18 @@ class AudioWorker:
         self.on_audio_chunk = on_audio_chunk
         self.on_error = on_error
         self.is_running = False
+        self.is_paused = False
         self.audio_stream = None
+
+    def set_paused(self, paused: bool) -> None:
+        """Gate audio capture without tearing down the stream.
+
+        While paused, captured chunks are dropped before reaching the
+        transcription worker, so the mic stops feeding text but the session
+        stays alive (the stream keeps running, so resume is instant).
+        """
+        self.is_paused = paused
+        logger.info("Audio capture %s", "paused" if paused else "resumed")
 
     def setup(self) -> bool:
         """Verify audio dependencies and microphone access.
@@ -89,8 +100,8 @@ class AudioWorker:
 
                 chunk = indata[:, 0].copy()  # Get first channel
 
-                # Emit to caller
-                if self.on_audio_chunk and self.is_running:
+                # Emit to caller (dropped while paused — mic gated off).
+                if self.on_audio_chunk and self.is_running and not self.is_paused:
                     self.on_audio_chunk(chunk)
 
             # Start recording stream

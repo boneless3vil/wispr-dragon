@@ -462,3 +462,85 @@ class TestMacroEditor:
             assert any("open_my_app" in f.name for f in macro_files)
         except Exception:
             pass
+
+
+class TestMacroEditorHelpers:
+    """Qt-free helpers in macro_editor (command building + vocabulary)."""
+
+    def test_build_macro_entry_launch(self):
+        from wispr_dragon.ui.macro_editor import build_macro_entry
+        m = build_macro_entry("open browser", "launch", target="firefox")
+        assert m == {"trigger": "open browser", "action": "launch", "program": "firefox"}
+
+    def test_build_macro_entry_python_script(self):
+        from wispr_dragon.ui.macro_editor import build_macro_entry
+        m = build_macro_entry("run it", "python_script", target="x.py")
+        assert m["script"] == "x.py"
+        # Saving must never trust/execute: no trust/run keys on the dict.
+        assert "trusted" not in m and "execute" not in m
+
+    def test_build_macro_entry_keystroke(self):
+        from wispr_dragon.ui.macro_editor import build_macro_entry
+        m = build_macro_entry("save", "keystroke", target="ctrl+s")
+        assert m["keys"] == "ctrl+s"
+
+    def test_build_macro_entry_text(self):
+        from wispr_dragon.ui.macro_editor import build_macro_entry
+        m = build_macro_entry("greet", "text", content="  hi  ")
+        assert m["content"] == "hi"
+
+    def test_build_macro_entry_requires_trigger(self):
+        from wispr_dragon.ui.macro_editor import build_macro_entry
+        with pytest.raises(ValueError):
+            build_macro_entry("   ", "launch", target="firefox")
+
+    def test_macro_filename_for(self):
+        from wispr_dragon.ui.macro_editor import macro_filename_for
+        assert macro_filename_for("open my app") == "open_my_app.yaml"
+
+
+class TestVocabularyHelpers:
+    """Round-trip tests against a real UserDictionary (no Qt)."""
+
+    @pytest.fixture
+    def dictionary(self):
+        from wispr_dragon.correction.dictionary import UserDictionary
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield UserDictionary(path=Path(tmpdir) / "dict.json")
+
+    def test_add_custom_word(self, dictionary):
+        from wispr_dragon.ui.macro_editor import add_custom_word
+        assert add_custom_word(dictionary, "Kubernetes") is True
+        assert "Kubernetes" in dictionary.custom_words
+
+    def test_add_custom_word_idempotent_and_blank(self, dictionary):
+        from wispr_dragon.ui.macro_editor import add_custom_word
+        assert add_custom_word(dictionary, "Foo") is True
+        assert add_custom_word(dictionary, "Foo") is False
+        assert add_custom_word(dictionary, "   ") is False
+
+    def test_remove_custom_word_roundtrip(self, dictionary):
+        from wispr_dragon.ui.macro_editor import add_custom_word, remove_custom_word
+        add_custom_word(dictionary, "Transient")
+        assert remove_custom_word(dictionary, "Transient") is True
+        assert "Transient" not in dictionary.custom_words
+        # Persisted across reload.
+        from wispr_dragon.correction.dictionary import UserDictionary
+        reloaded = UserDictionary(path=dictionary.path)
+        assert "Transient" not in reloaded.custom_words
+
+    def test_remove_custom_word_absent(self, dictionary):
+        from wispr_dragon.ui.macro_editor import remove_custom_word
+        assert remove_custom_word(dictionary, "nope") is False
+
+    def test_add_and_remove_correction_roundtrip(self, dictionary):
+        from wispr_dragon.ui.macro_editor import add_correction, remove_correction
+        assert add_correction(dictionary, "their", "there") is True
+        assert dictionary.get_correction("their") == "there"
+        assert remove_correction(dictionary, "their") is True
+        assert dictionary.get_correction("their") is None
+
+    def test_add_correction_blank(self, dictionary):
+        from wispr_dragon.ui.macro_editor import add_correction
+        assert add_correction(dictionary, "", "there") is False
+        assert add_correction(dictionary, "their", "") is False
