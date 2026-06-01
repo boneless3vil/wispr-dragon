@@ -37,6 +37,7 @@ class TrayApp:
         self.menu: QMenu | None = None
         self.state_action: QAction | None = None
         self.toggle_action: QAction | None = None
+        self.quit_action: QAction | None = None
 
     def start(self) -> None:
         """Build the tray icon + menu. Requires a QApplication to exist."""
@@ -64,9 +65,14 @@ class TrayApp:
 
         self.menu.addSeparator()
 
-        quit_action = QAction("Quit")
-        quit_action.triggered.connect(self._on_quit)
-        self.menu.addAction(quit_action)
+        # Parent the action to the menu AND keep a Python reference. Without an
+        # owner, the QAction is garbage-collected when start() returns and the
+        # underlying C++ object is destroyed — silently dropping "Quit" (and its
+        # separator) from the menu. The two actions above survived only because
+        # they're held as instance attributes.
+        self.quit_action = QAction("Quit", self.menu)
+        self.quit_action.triggered.connect(self._on_quit)
+        self.menu.addAction(self.quit_action)
 
         self.tray.setContextMenu(self.menu)
         self.tray.show()
