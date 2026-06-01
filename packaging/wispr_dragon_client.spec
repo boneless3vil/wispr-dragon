@@ -63,9 +63,10 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    # console=True keeps the transcript/log stream visible. Flip to False once
-    # the tray UX is the only intended surface.
-    console=True,
+    # Tray UI is the intended surface, so no console window on launch. The
+    # transcript/log stream still goes to a logfile / can be seen with --no-tray
+    # from a terminal during development.
+    console=False,
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
