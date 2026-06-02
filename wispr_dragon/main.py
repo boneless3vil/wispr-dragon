@@ -133,6 +133,53 @@ def _validate_keystroke(keys: str) -> bool:
     return bool(re.match(r"^[a-zA-Z0-9+\-_]+$", keys))
 
 
+def _detect_lan_ip() -> str:
+    """Best-effort LAN IP for the host, for the client-setup hint.
+
+    Opens a throwaway UDP socket toward a public address (no packets sent) and
+    reads back the local endpoint the OS would route through. Returns a
+    placeholder if anything goes wrong — never raises.
+    """
+    import socket
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    return "<this-host-ip>"
+
+
+def format_client_setup(api_key: str, host_ip: str, port: int, generated: bool) -> str:
+    """Render a copy-paste-friendly client-setup block for ``--print-key``.
+
+    Pure/no-IO so it can be unit-tested. Keeps a legacy ``API Key:`` /
+    ``Generated API Key:`` line (some scripts grep for it) and adds a ready-to-
+    paste ``config.json`` snippet plus the server URL the client should use.
+    """
+    url = f"ws://{host_ip}:{port}"
+    saved_note = " (generated, saved to server config.yaml)" if generated else ""
+    return (
+        "=== Wispr Dragon — Client Setup ===\n"
+        f"API Key: {api_key}{saved_note}\n"
+        f'Server URL: {url}   ("localhost" only works if the client runs on this machine)\n'
+        "\n"
+        "Paste into the Windows client's config.json\n"
+        "(%LOCALAPPDATA%\\WisprDragon\\config.json), or use the client's Settings dialog:\n"
+        "\n"
+        "{\n"
+        f'  "server_url": "{url}",\n'
+        f'  "api_key": "{api_key}"\n'
+        "}"
+    )
+
+
 def _handle_server_mode(config: Config, print_key: bool = False) -> int:
     """Launch WebSocket server for speech-to-text service."""
     try:
@@ -140,14 +187,19 @@ def _handle_server_mode(config: Config, print_key: bool = False) -> int:
         from wispr_dragon.server.websocket_server import WebSocketServer
 
         if print_key:
-            if config.server.api_key:
-                print(f"API Key: {config.server.api_key}")
-            else:
+            generated = not config.server.api_key
+            if generated:
                 import secrets
-                key = secrets.token_hex(16)
-                config.server.api_key = key
+                config.server.api_key = secrets.token_hex(16)
                 config.save()
-                print(f"Generated API Key: {key}")
+            print(
+                format_client_setup(
+                    config.server.api_key,
+                    _detect_lan_ip(),
+                    config.server.port,
+                    generated,
+                )
+            )
             return 0
 
         logger.info("Starting server mode...")

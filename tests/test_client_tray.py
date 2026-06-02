@@ -48,15 +48,30 @@ def _menu_texts(tray: TrayApp) -> list[str]:
     return [a.text() for a in tray.menu.actions() if not a.isSeparator()]
 
 
-def test_menu_has_all_three_actions(qapp, fake_client):
-    """Recording / Toggle / Quit must all be present after start()."""
+def test_menu_has_all_actions(qapp, fake_client):
+    """Recording / Toggle / Settings / Quit must all be present after start()."""
     tray = TrayApp(fake_client)
     tray.start()
     try:
         texts = _menu_texts(tray)
         assert any("Recording" in t for t in texts)
         assert any("Toggle" in t for t in texts)
+        assert any("Settings" in t for t in texts)
         assert any(t == "Quit" for t in texts)
+    finally:
+        tray.stop()
+
+
+def test_settings_action_survives_gc_and_triggers_open_settings(qapp, fake_client):
+    """Settings must survive a GC pass and call client.open_settings()."""
+    tray = TrayApp(fake_client)
+    tray.start()
+    try:
+        gc.collect()
+        assert any("Settings" in t for t in _menu_texts(tray))
+        assert tray.settings_action is not None
+        tray.settings_action.trigger()
+        fake_client.open_settings.assert_called_once()
     finally:
         tray.stop()
 

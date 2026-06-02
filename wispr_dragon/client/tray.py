@@ -37,6 +37,7 @@ class TrayApp:
         self.menu: QMenu | None = None
         self.state_action: QAction | None = None
         self.toggle_action: QAction | None = None
+        self.settings_action: QAction | None = None
         self.quit_action: QAction | None = None
 
     def start(self) -> None:
@@ -62,6 +63,11 @@ class TrayApp:
         self.toggle_action.setChecked(self.client.hotkey.mode == HotkeyMode.TOGGLE)
         self.toggle_action.toggled.connect(self._on_toggle_mode)
         self.menu.addAction(self.toggle_action)
+
+        # Settings — same parented+referenced pattern as Quit (see below).
+        self.settings_action = QAction("Settings…", self.menu)
+        self.settings_action.triggered.connect(self._on_settings)
+        self.menu.addAction(self.settings_action)
 
         self.menu.addSeparator()
 
@@ -111,6 +117,10 @@ class TrayApp:
     def _on_toggle_mode(self, checked: bool) -> None:
         mode = HotkeyMode.TOGGLE if checked else HotkeyMode.PTT
         self.client.set_mode(mode)
+
+    def _on_settings(self) -> None:
+        logger.info("Settings requested from system tray")
+        self.client.open_settings()
 
     def _on_quit(self) -> None:
         logger.info("Quit requested from system tray")

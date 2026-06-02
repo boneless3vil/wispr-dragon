@@ -21,6 +21,39 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path.home() / "AppData" / "Local" / "WisprDragon" / "config.json"
 
 
+def needs_setup(config: dict) -> bool:
+    """True when the client isn't ready to connect and should run first-run setup.
+
+    Keys off empty/missing required fields (``api_key``, ``server_url``) rather
+    than a missing file or a dedicated flag — this survives partial hand-edits
+    and needs no config-schema addition. Pure: no Qt, no IO.
+    """
+    return not config.get("api_key") or not config.get("server_url")
+
+
+def validate_setup(server_url: str, api_key: str) -> tuple[bool, str]:
+    """Validate setup-dialog input. Returns (ok, error_message).
+
+    Pure helper carrying the dialog's validation weight so it tests without a
+    display. Accepts only ``ws://``/``wss://`` URLs with a host; rejects blank
+    keys. ``error_message`` is "" when ok.
+    """
+    from urllib.parse import urlparse
+
+    url = (server_url or "").strip()
+    key = (api_key or "").strip()
+    if not key:
+        return False, "API key is required."
+    if not url:
+        return False, "Server URL is required."
+    parsed = urlparse(url)
+    if parsed.scheme not in ("ws", "wss"):
+        return False, "Server URL must start with ws:// or wss://"
+    if not parsed.netloc:
+        return False, "Server URL must include a host, e.g. ws://192.168.1.10:8765"
+    return True, ""
+
+
 class WisprDragonClient:
     """Main client application."""
 
@@ -54,6 +87,10 @@ class WisprDragonClient:
         self.hotkey: Optional[Hotkey] = None
         self.tray = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Set True when first-run setup was cancelled — the client idles in the
+        # tray (unconfigured) instead of connecting or exiting.
+        self.unconfigured = False
+        self._setup_dialog = None  # held during exec() to dodge the GC lesson
 
     def _load_config(self) -> dict:
         """Load client configuration.
@@ -99,6 +136,18 @@ class WisprDragonClient:
             "on" if (self.inject_enabled and self.injector.available) else "off",
         )
 
+        # First-run setup: if the client has no usable config, prompt for the
+        # server URL + key before connecting. GUI-only — the --no-tray path is
+        # handled in main() and never reaches here unconfigured.
+        if needs_setup(self.config) and not self.no_tray:
+            if self._prompt_setup():
+                self._save_config()
+            else:
+                # Cancelled: idle in the tray, unconfigured. Build the tray so
+                # the user can open Settings later, but don't connect.
+                self.unconfigured = True
+                logger.info("Setup cancelled — idling in tray (unconfigured)")
+
         self.audio_queue = asyncio.Queue()
         self.audio_capture = WindowsAudioCapture(
             sample_rate=self.config.get("sample_rate", 16000),
@@ -107,13 +156,8 @@ class WisprDragonClient:
         # Start with the mic gated off — the hotkey opens it.
         self.audio_capture.set_paused(True)
 
-        self.ws_client = WebSocketClient(
-            server_url=self.config.get("server_url", "ws://localhost:8765"),
-            api_key=self.config.get("api_key", ""),
-            on_transcript=self._on_transcript,
-            on_error=self._on_error,
-            on_status=self._on_status,
-        )
+        if not self.unconfigured:
+            self._build_ws_client()
 
         mode = self._resolve_mode()
         self.hotkey = Hotkey(
@@ -138,23 +182,37 @@ class WisprDragonClient:
                 self.tray = None
 
         try:
-            audio_task = asyncio.create_task(self.audio_capture.start(self.audio_queue))
-            client_task = asyncio.create_task(self.ws_client.run(self.audio_queue))
+            # Idle in the tray while unconfigured (first-run setup cancelled),
+            # until the user enters settings via the tray or quits. open_settings()
+            # clears self.unconfigured and builds the ws_client, so the loop below
+            # then falls through into the normal connect path — no restart.
+            if self.tray is not None:
+                self.tray.update_recording_state(False)
+            while self._running and self.unconfigured:
+                await asyncio.sleep(0.25)
 
-            # Stop as soon as EITHER task ends — e.g. the WebSocket client giving
-            # up after an auth failure. Using gather() here would keep waiting on
-            # the (endless) audio task, so the process never shut down and the
-            # tray icon lingered. FIRST_COMPLETED + teardown guarantees shutdown.
-            done, pending = await asyncio.wait(
-                {audio_task, client_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            self._running = False
-            self.audio_capture.stop()
-            self.ws_client.stop()
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(audio_task, client_task, return_exceptions=True)
+            if self._running and not self.unconfigured and self.ws_client is None:
+                self._build_ws_client()
+
+            if self._running and self.ws_client is not None:
+                audio_task = asyncio.create_task(self.audio_capture.start(self.audio_queue))
+                client_task = asyncio.create_task(self.ws_client.run(self.audio_queue))
+
+                # Stop as soon as EITHER task ends — e.g. the WebSocket client
+                # giving up after an auth failure. Using gather() here would keep
+                # waiting on the (endless) audio task, so the process never shut
+                # down and the tray icon lingered. FIRST_COMPLETED + teardown
+                # guarantees shutdown.
+                done, pending = await asyncio.wait(
+                    {audio_task, client_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                self._running = False
+                self.audio_capture.stop()
+                self.ws_client.stop()
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(audio_task, client_task, return_exceptions=True)
 
         except KeyboardInterrupt:
             logger.info("Client stopped by user")
@@ -187,6 +245,74 @@ class WisprDragonClient:
             self.audio_capture.stop()
         if self.ws_client:
             self.ws_client.stop()
+
+    # --- setup / settings -------------------------------------------------
+
+    def _build_ws_client(self) -> None:
+        """(Re)create the WebSocket client from current config."""
+        self.ws_client = WebSocketClient(
+            server_url=self.config.get("server_url", "ws://localhost:8765"),
+            api_key=self.config.get("api_key", ""),
+            on_transcript=self._on_transcript,
+            on_error=self._on_error,
+            on_status=self._on_status,
+        )
+
+    def _prompt_setup(self) -> bool:
+        """Show the modal setup dialog. Returns True if saved, False if cancelled.
+
+        Requires a QApplication (tray path). Returns False if Qt is unavailable
+        so callers fall back to the unconfigured/idle behaviour.
+        """
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from wispr_dragon.client.setup_dialog import SetupDialog
+        except ImportError as e:
+            logger.warning("Setup dialog unavailable (%s)", e)
+            return False
+        if QApplication.instance() is None:
+            return False
+        # Hold a reference for the dialog's lifetime (the QAction GC lesson).
+        self._setup_dialog = SetupDialog(self.config)
+        try:
+            accepted = bool(self._setup_dialog.exec())
+            if accepted:
+                result = self._setup_dialog.result_config()
+                if result:
+                    self.config = result
+                    return True
+            return False
+        finally:
+            self._setup_dialog = None
+
+    def open_settings(self) -> None:
+        """Open the setup dialog at runtime (from the tray) and apply changes.
+
+        On a server URL / key change, rebuild the WebSocket client so the run
+        loop reconnects with the new values (one reconnect). If the client was
+        idling unconfigured, this transitions it into the connect path.
+        """
+        old = (self.config.get("server_url"), self.config.get("api_key"))
+        if not self._prompt_setup():
+            return
+        self._save_config()
+        new = (self.config.get("server_url"), self.config.get("api_key"))
+
+        if self.unconfigured:
+            # run()'s idle loop will pick this up and build the ws_client.
+            self.unconfigured = False
+            logger.info("Settings entered — connecting")
+            return
+        if new != old and self.ws_client is not None:
+            logger.info("Server settings changed — reconnecting")
+            self.ws_client.server_url = self.config.get("server_url", "ws://localhost:8765")
+            self.ws_client.api_key = self.config.get("api_key", "")
+            self.ws_client._reconnect_count = 0
+            # Drop the current socket; run()'s loop re-establishes it.
+            if self._loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self.ws_client._close_socket(), self._loop
+                )
 
     # --- hotkey integration ----------------------------------------------
 
@@ -297,6 +423,17 @@ def main():
     )
 
     if args.no_tray:
+        # Headless has no GUI to enter setup — fail fast with an actionable hint
+        # rather than blocking or reconnect-storming a server with an empty key.
+        if needs_setup(client.config):
+            logger.error(
+                "Client is not configured (missing server_url or api_key) and "
+                "--no-tray has no setup UI. Run the server with --print-key, then "
+                "set both fields in %s (or launch without --no-tray to use the "
+                "setup dialog).",
+                client.config_path,
+            )
+            return 2
         try:
             asyncio.run(client.run())
         except KeyboardInterrupt:
