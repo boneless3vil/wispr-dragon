@@ -66,8 +66,11 @@ class UserDictionary:
             entry["correct"] = correct
             entry["frequency"] = entry.get("frequency", 0) + 1
             entry["last_used"] = datetime.now().isoformat()
-            if wrong_lower not in entry.get("alternatives", []):
-                entry["alternatives"].append(wrong_lower)
+            # setdefault guards entries written without an "alternatives" key
+            # (e.g. hand-edited or from an older format) — otherwise this KeyErrors.
+            alts = entry.setdefault("alternatives", [])
+            if wrong_lower not in alts:
+                alts.append(wrong_lower)
         else:
             self.corrections[wrong_lower] = {
                 "correct": correct,

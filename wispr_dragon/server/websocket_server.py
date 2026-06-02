@@ -117,8 +117,36 @@ class WebSocketServer:
         elif msg_type == "ping":
             ts = data.get("ts", 0)
             await websocket.send(json.dumps({"type": "pong", "ts": ts}))
+        elif msg_type == "learn_correction":
+            await self._handle_learn_correction(data, websocket)
         else:
             logger.warning("Unknown message type: %s", msg_type)
+
+    async def _handle_learn_correction(self, data: dict, websocket: WebSocketServerProtocol) -> None:
+        """Persist a learned correction so it auto-applies to future transcripts.
+
+        "always" bumps the frequency past auto_apply_threshold (repeat ×3, the
+        same trick the correction window uses) so the fix applies without
+        confirmation next time.
+        """
+        wrong = (data.get("wrong") or "").strip()
+        correct = (data.get("correct") or "").strip()
+        if not wrong or not correct:
+            return
+        dictionary = getattr(self.pipeline_runner, "dictionary", None)
+        if dictionary is None:
+            logger.warning("learn_correction received but no dictionary loaded")
+            return
+        repeats = 3 if data.get("always") else 1
+        for _ in range(repeats):
+            dictionary.add_correction(wrong, correct)
+        logger.info("Learned correction: '%s' -> '%s' (always=%s)", wrong, correct, bool(data.get("always")))
+        try:
+            await websocket.send(json.dumps({
+                "type": "correction_learned", "wrong": wrong, "correct": correct,
+            }))
+        except Exception:
+            pass
 
     async def _process_audio_loop(self) -> None:
         """Process audio chunks and send transcriptions back.

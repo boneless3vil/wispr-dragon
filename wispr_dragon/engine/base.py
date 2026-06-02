@@ -12,6 +12,14 @@ class TranscriptionSegment:
     end: float
     confidence: float = 0.0
     words: list = field(default_factory=list)
+    # Alternative transcription hypotheses (N-best), best-first, EXCLUDING the
+    # chosen `text`. Empty today: faster-whisper/CTranslate2 don't expose beam
+    # runners-up via their public API, and the cloud APIs return none. This is
+    # the forward-compatible slot — a future custom decode can populate it and
+    # the correction window will prefer it over synthesized alternates, with no
+    # protocol change (the transcript message gains an optional field only when
+    # it's actually non-empty).
+    alternatives: list = field(default_factory=list)
 
 
 @dataclass

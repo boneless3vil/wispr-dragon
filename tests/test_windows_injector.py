@@ -11,6 +11,8 @@ import sys
 from wispr_dragon.client.windows_injector import (
     INPUT,
     WindowsTextInjector,
+    _backspaces,
+    _replace_last_inputs,
     _text_to_inputs,
 )
 
@@ -56,3 +58,28 @@ def test_inject_is_a_safe_noop_off_windows():
         return  # this test asserts the non-Windows fallback
     # Must not raise, and must report that nothing was injected.
     assert WindowsTextInjector().inject("hello world") is False
+
+
+# --- replace_last (correction) -------------------------------------------
+
+def test_backspaces_count():
+    assert len(_backspaces(3)) == 6  # 3 x (down + up)
+    assert _backspaces(0) == []
+    assert _backspaces(-1) == []
+
+
+def test_replace_last_inputs_backspaces_then_types():
+    # erase 4 chars (8 events) + type "hi" (4 events)
+    events = _replace_last_inputs(4, "hi")
+    assert len(events) == 8 + 4
+    assert all(isinstance(e, INPUT) for e in events)
+
+
+def test_replace_last_noop_off_windows():
+    if sys.platform == "win32":
+        return
+    assert WindowsTextInjector().replace_last(5, "fixed") is False
+
+
+def test_replace_last_rejects_negative_len():
+    assert WindowsTextInjector().replace_last(-1, "x") is False

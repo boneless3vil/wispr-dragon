@@ -106,6 +106,20 @@ class WebSocketClient:
             logger.error("Error sending audio: %s", e)
             return False
 
+    async def send_json(self, message: dict) -> bool:
+        """Send a JSON control message to the server (e.g. learn_correction).
+
+        Returns True if sent, False if there's no live socket or it failed.
+        """
+        if not self.websocket:
+            return False
+        try:
+            await self.websocket.send(json.dumps(message))
+            return True
+        except Exception as e:
+            logger.error("Error sending control message: %s", e)
+            return False
+
     async def listen(self) -> None:
         """Listen for messages from server.
 

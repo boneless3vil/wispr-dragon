@@ -24,6 +24,7 @@ _INPUT_KEYBOARD = 1
 _KEYEVENTF_KEYUP = 0x0002
 _KEYEVENTF_UNICODE = 0x0004
 _VK_RETURN = 0x0D
+_VK_BACK = 0x08
 
 # ULONG_PTR is pointer-sized; ctypes.wintypes does not define it.
 _ULONG_PTR = ctypes.c_size_t
@@ -79,6 +80,24 @@ def _key_event(vk: int, scan: int, flags: int) -> INPUT:
     )
 
 
+def _backspaces(n: int) -> list:
+    """Build ``n`` Backspace key-down/key-up INPUT events."""
+    events: list = []
+    for _ in range(max(0, n)):
+        events.append(_key_event(_VK_BACK, 0, 0))
+        events.append(_key_event(_VK_BACK, 0, _KEYEVENTF_KEYUP))
+    return events
+
+
+def _replace_last_inputs(old_len: int, new_text: str) -> list:
+    """Events to erase ``old_len`` chars then type ``new_text``.
+
+    Pure/testable: backspaces are counted by code points (matching how the user
+    perceives characters), then the replacement is typed via the normal path.
+    """
+    return _backspaces(old_len) + _text_to_inputs(new_text)
+
+
 def _text_to_inputs(text: str) -> list:
     """Convert text into a flat list of key-down/key-up INPUT events.
 
@@ -128,7 +147,22 @@ class WindowsTextInjector:
         if not text or not self.available:
             return False
 
-        events = _text_to_inputs(text)
+        return self._send(_text_to_inputs(text))
+
+    def replace_last(self, old_len: int, new_text: str) -> bool:
+        """Erase the last ``old_len`` characters, then type ``new_text``.
+
+        Used by "correct that": backspace over the previously injected text in
+        the focused field and retype the correction. Assumes focus is unchanged
+        and the cursor sits at the end of that text — the caller is responsible
+        for that precondition. No-op (returns False) off Windows.
+        """
+        if not self.available or old_len < 0:
+            return False
+        return self._send(_replace_last_inputs(old_len, new_text))
+
+    def _send(self, events: list) -> bool:
+        """Deliver a list of INPUT events via SendInput. Returns success."""
         if not events:
             return False
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from wispr_dragon.client.audio_capture import WindowsAudioCapture
+from wispr_dragon.client.correction_commands import is_correct_trigger
 from wispr_dragon.client.hotkey import Hotkey, HotkeyMode
 from wispr_dragon.client.websocket_client import WebSocketClient
 from wispr_dragon.client.windows_injector import WindowsTextInjector
@@ -91,6 +92,12 @@ class WisprDragonClient:
         # tray (unconfigured) instead of connecting or exiting.
         self.unconfigured = False
         self._setup_dialog = None  # held during exec() to dodge the GC lesson
+        # Correction ("correct that"): remember the last text we injected (and
+        # the exact length typed, incl. trailing space) so we can backspace over
+        # it and retype. None when there's nothing correctable.
+        self._last_injection_text: Optional[str] = None
+        self._last_injection_len = 0
+        self._correction_dialog = None  # held during exec()
 
     def _load_config(self) -> dict:
         """Load client configuration.
@@ -364,9 +371,69 @@ class WisprDragonClient:
             text: Transcribed text from server
         """
         print(f"[TRANSCRIPT] {text}")
+
+        # "correct that" — open the correction window on the last utterance
+        # instead of injecting the command itself.
+        if is_correct_trigger(text):
+            self._open_correction()
+            return
+
         if self.inject_enabled:
             # Trailing space so consecutive phrases don't run together.
-            self.injector.inject(text + " ")
+            payload = text + " "
+            if self.injector.inject(payload):
+                self._last_injection_text = text
+                self._last_injection_len = len(payload)
+
+    def _open_correction(self) -> None:
+        """Show the correction dialog for the last injected utterance."""
+        if self._last_injection_text is None:
+            logger.info("Nothing to correct yet")
+            return
+        if not self.injector.available:
+            logger.warning("Correction needs text injection (Windows only) — skipped")
+            return
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from wispr_dragon.client.correction_dialog import CorrectionDialog
+        except ImportError as e:
+            logger.warning("Correction dialog unavailable (%s)", e)
+            return
+        if QApplication.instance() is None:
+            return
+
+        original = self._last_injection_text
+        self._correction_dialog = CorrectionDialog(original, dictionary=None)
+        try:
+            if not self._correction_dialog.exec():
+                return
+            result = self._correction_dialog.result_correction()
+        finally:
+            self._correction_dialog = None
+        if not result:
+            return
+
+        corrected, always = result
+        if corrected == original:
+            return
+        # Replace the injected text in the focused field: backspace the old
+        # (incl. trailing space) and retype the correction + space.
+        replacement = corrected + " "
+        if self.injector.replace_last(self._last_injection_len, replacement):
+            self._last_injection_text = corrected
+            self._last_injection_len = len(replacement)
+            logger.info("Corrected '%s' -> '%s'", original, corrected)
+            self._learn_correction(original, corrected, always)
+
+    def _learn_correction(self, wrong: str, correct: str, always: bool) -> None:
+        """Send the learned correction to the server to persist + auto-apply."""
+        if self.ws_client is None or self._loop is None:
+            return
+        msg = {"type": "learn_correction", "wrong": wrong, "correct": correct, "always": always}
+        try:
+            asyncio.run_coroutine_threadsafe(self.ws_client.send_json(msg), self._loop)
+        except Exception as e:
+            logger.warning("Could not send learned correction: %s", e)
 
     def _on_error(self, error: str) -> None:
         """Handle error from server.

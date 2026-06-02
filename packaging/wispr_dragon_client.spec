@@ -34,6 +34,9 @@ a = Analysis(
         # pynput resolves its backend lazily by platform; name the Win32 ones.
         "pynput.keyboard._win32",
         "pynput.mouse._win32",
+        # Lazily imported inside app.py (_prompt_setup / tray path) — name it so
+        # PyInstaller bundles the first-run setup dialog.
+        "wispr_dragon.client.setup_dialog",
     ],
     hookspath=[],
     hooksconfig={},
