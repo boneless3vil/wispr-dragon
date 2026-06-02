@@ -37,6 +37,9 @@ a = Analysis(
         # Lazily imported inside app.py (_prompt_setup / tray path) — name it so
         # PyInstaller bundles the first-run setup dialog.
         "wispr_dragon.client.setup_dialog",
+        # Lazily imported inside app.py (_open_correction) — bundle the
+        # correction dialog (it pulls in correction.alternates).
+        "wispr_dragon.client.correction_dialog",
     ],
     hookspath=[],
     hooksconfig={},
