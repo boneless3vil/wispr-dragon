@@ -124,7 +124,10 @@ class TrayApp:
 
     def _on_quit(self) -> None:
         logger.info("Quit requested from system tray")
+        # Hide the icon immediately so the menu feels snappy, then let asyncio
+        # finish naturally. Calling app.quit() here stops the Qt loop while
+        # client.run() is still winding down, which qasync raises as
+        # "RuntimeError: Event loop stopped before Future completed."
+        if self.tray is not None:
+            self.tray.hide()
         self.client.stop()
-        app = QApplication.instance()
-        if app is not None:
-            app.quit()
