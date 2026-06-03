@@ -27,7 +27,12 @@ class WebSocketAudioReceiver:
         self._running = False
         # Bounded so queue_audio()'s queue.Full drop path actually triggers under
         # backpressure (model slower than real-time) instead of growing unbounded.
-        self._sync_queue = queue.Queue(maxsize=200)
+        # 5000 frames is ~2.5 minutes at 30 ms / frame — enough to absorb the
+        # bursts that the client's hotkey silence-flush and resume-after-pause
+        # produce while Whisper is mid-segment. The previous 200-frame limit
+        # (~6 s) overflowed mid-utterance, dropping frames and causing
+        # Whisper to hallucinate repeating-token garbage.
+        self._sync_queue = queue.Queue(maxsize=5000)
         self._consumer_task = None
 
     @property
