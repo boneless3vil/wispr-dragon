@@ -5,7 +5,6 @@ Requires OPENAI_API_KEY environment variable.
 """
 
 import logging
-from typing import Optional
 
 import numpy as np
 
@@ -31,7 +30,7 @@ class OpenAIAPIEngine(TranscriptionEngine):
 
     def is_available(self) -> bool:
         try:
-            import openai
+            import openai  # noqa: F401
             import os
             api_key = os.getenv("OPENAI_API_KEY")
             return api_key is not None and api_key.startswith("sk-")

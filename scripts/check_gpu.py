@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Detect available GPU backend and report capabilities."""
 
-import sys
 
 
 def check_rocm():
@@ -68,12 +67,12 @@ def main():
     print("\n--- PyTorch GPU ---")
     gpu_info = check_rocm()
     if gpu_info and "error" not in gpu_info:
-        print(f"  Backend:  {gpu_info[backend]}")
-        print(f"  Device:   {gpu_info[device]}")
-        print(f"  VRAM:     {gpu_info[vram_gb]} GB")
-        print(f"  PyTorch:  {gpu_info[torch_version]}")
+        print(f"  Backend:  {gpu_info['backend']}")
+        print(f"  Device:   {gpu_info['device']}")
+        print(f"  VRAM:     {gpu_info['vram_gb']} GB")
+        print(f"  PyTorch:  {gpu_info['torch_version']}")
     elif gpu_info and "error" in gpu_info:
-        print(f"  Error: {gpu_info[error]}")
+        print(f"  Error: {gpu_info['error']}")
     else:
         print("  No GPU detected via PyTorch")
 
@@ -81,7 +80,7 @@ def main():
     print("\n--- ROCm SMI ---")
     rocm_info = check_rocm_smi()
     if rocm_info:
-        print(f"  {rocm_info.get(rocm_smi, Available)}")
+        print(f"  {rocm_info.get('rocm_smi', 'Available')}")
     else:
         print("  Not available")
 
@@ -105,7 +104,7 @@ def main():
             print("  faster-whisper may not support ROCm; test with caution")
         else:
             print("  Use faster-whisper for best CUDA performance")
-        print(f"  Suggested model: large-v3 ({gpu_info[vram_gb]} GB VRAM available)")
+        print(f"  Suggested model: large-v3 ({gpu_info['vram_gb']} GB VRAM available)")
     else:
         print("  No GPU detected — using CPU mode")
         print("  Suggested model: small.en or medium.en (INT8)")

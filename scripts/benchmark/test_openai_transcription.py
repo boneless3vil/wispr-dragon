@@ -3,9 +3,7 @@
 
 import os
 import sys
-import time
 import numpy as np
-from pathlib import Path
 
 def test_openai_api():
     """Test OpenAI API transcription with audio from microphone."""

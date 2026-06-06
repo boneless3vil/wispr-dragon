@@ -101,7 +101,7 @@ def _handle_security_status(user_dir) -> int:
     else:
         print("Status: UNLOCKED")
 
-    print(f"\nPolicy Settings:")
+    print("\nPolicy Settings:")
     print(f"  Allow Python scripts:    {security.allows_python_scripts()}")
     print(f"  Allow YAML macros:       {security.allows_yaml_macros()}")
     print(f"  Allow program launch:    {security.allows_program_launch()}")

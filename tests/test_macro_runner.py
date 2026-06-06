@@ -1,9 +1,8 @@
 """Tests for macro execution system."""
 
-import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -218,7 +217,7 @@ def test_execute_launch_with_placeholder(mock_which, macro_runner):
     macro = {"action": "launch", "program": "{app}"}
     captured_args = {"app": "firefox"}
 
-    with patch("subprocess.Popen") as mock_popen:
+    with patch("subprocess.Popen"):
         result = macro_runner.execute(macro, captured_args)
         assert result is True
 

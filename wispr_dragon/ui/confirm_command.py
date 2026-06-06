@@ -155,7 +155,6 @@ class ConfirmationDialog:
         """
         try:
             from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
-            from PyQt6.QtCore import Qt
         except ImportError:
             logger.warning("PyQt6 not available, falling back to terminal prompt")
             return self._terminal_prompt(command_text, trigger, action, target)

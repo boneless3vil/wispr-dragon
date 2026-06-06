@@ -1,8 +1,5 @@
 """Tests for the user dictionary."""
 
-import json
-import tempfile
-from pathlib import Path
 
 import pytest
 

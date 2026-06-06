@@ -2,7 +2,6 @@
 """Test microphone audio capture and VAD in WSL2."""
 
 import sys
-import time
 
 
 def test_audio_capture():
@@ -64,7 +63,6 @@ def test_vad():
     """Test Voice Activity Detection."""
     from wispr_dragon.audio.vad import VoiceActivityDetector
     from wispr_dragon.audio.capture import AudioCapture
-    import numpy as np
 
     print("\n--- Testing Voice Activity Detection ---")
     try:

@@ -3,10 +3,8 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
-import yaml
 
 from wispr_dragon.macros.security import SecurityPolicy
 

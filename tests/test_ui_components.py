@@ -1,8 +1,6 @@
 """Tests for UI components (dictation box, audio/transcription workers)."""
 
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest

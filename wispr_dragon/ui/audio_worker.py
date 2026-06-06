@@ -1,7 +1,6 @@
 """Audio capture worker thread for live recording."""
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +82,6 @@ class AudioWorker:
 
         try:
             import sounddevice as sd
-            import numpy as np
 
             self.is_running = True
 

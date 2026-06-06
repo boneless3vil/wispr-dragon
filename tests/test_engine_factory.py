@@ -1,6 +1,5 @@
 """Tests for engine factory and selection logic."""
 
-from unittest.mock import patch
 import pytest
 
 from wispr_dragon.config import Config

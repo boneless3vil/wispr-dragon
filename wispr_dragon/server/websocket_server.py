@@ -3,12 +3,15 @@
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 import websockets
 from websockets.server import WebSocketServerProtocol
 
 from wispr_dragon.config import Config
 from wispr_dragon.server.audio_receiver import WebSocketAudioReceiver
+
+if TYPE_CHECKING:
+    from wispr_dragon.server.pipeline_runner import PipelineRunner
 
 logger = logging.getLogger(__name__)
 

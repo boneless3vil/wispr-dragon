@@ -12,7 +12,6 @@ Design:
 import logging
 import queue
 import time
-from typing import Optional
 
 import numpy as np
 

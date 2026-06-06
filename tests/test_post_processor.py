@@ -1,7 +1,5 @@
 """Tests for the post-processing pipeline."""
 
-import tempfile
-from pathlib import Path
 
 import pytest
 

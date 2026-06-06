@@ -1,6 +1,5 @@
 """Tests for command mode matching and registry."""
 
-import tempfile
 from pathlib import Path
 
 import pytest

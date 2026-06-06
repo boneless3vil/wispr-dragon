@@ -1,7 +1,6 @@
 """Voice Activity Detection wrapper using Silero VAD."""
 
 import logging
-from collections import deque
 from typing import Optional
 
 import numpy as np

@@ -18,7 +18,7 @@ headlessly.
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -335,8 +335,7 @@ class MacroEditor:
     def _build_vocabulary_tab(self):
         """Build the custom-words + corrections tab backed by UserDictionary."""
         from PyQt6.QtWidgets import (
-            QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-            QLineEdit, QListWidget, QPushButton,
+            QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLineEdit, QListWidget, QPushButton,
         )
 
         self._ensure_dictionary()

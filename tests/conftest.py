@@ -11,7 +11,6 @@ for the whole session, so no test can ever touch the real user config.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 

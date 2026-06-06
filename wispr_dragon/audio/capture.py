@@ -3,7 +3,7 @@
 import logging
 import queue
 import threading
-from typing import Callable, Optional
+from typing import Optional
 
 import numpy as np
 

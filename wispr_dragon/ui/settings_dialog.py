@@ -1,8 +1,6 @@
 """Settings dialog for Wispr Dragon configuration."""
 
 import logging
-from pathlib import Path
-from typing import Optional
 
 from wispr_dragon.config import Config
 from wispr_dragon.engine.gpu_advisor import recommend_model
@@ -34,7 +32,7 @@ class SettingsDialog:
         try:
             from PyQt6.QtWidgets import (
                 QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
-                QLabel, QLineEdit, QSpinBox, QDoubleSpinBox,
+                QLabel, QSpinBox, QDoubleSpinBox,
                 QComboBox, QPushButton, QFormLayout, QWidget
             )
         except ImportError:

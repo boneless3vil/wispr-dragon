@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def _check_pyqt6():
     try:
-        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtWidgets import QApplication  # noqa: F401
         return True
     except ImportError:
         return False

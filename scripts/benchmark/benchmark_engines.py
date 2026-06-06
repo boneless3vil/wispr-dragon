@@ -5,7 +5,6 @@ import os
 import sys
 import time
 import numpy as np
-from pathlib import Path
 
 def capture_audio(duration_seconds=5):
     """Capture audio from microphone."""
@@ -68,7 +67,7 @@ def benchmark_local_whisper(audio):
         print(f"  Text: {result.text}")
         if result.segments:
             print(f"  Confidence: {result.segments[0].confidence:.2%}")
-        print(f"\nTIMING:")
+        print("\nTIMING:")
         print(f"  Model load:  {load_time:.2f}s (one-time)")
         print(f"  Transcribe:  {transcribe_time:.2f}s")
         print(f"  TOTAL:       {total_time:.2f}s")
@@ -120,7 +119,7 @@ def benchmark_openai_api(audio):
         print(f"  Text: {result.text}")
         if result.segments:
             print(f"  Confidence: {result.segments[0].confidence:.2%}")
-        print(f"\nTIMING:")
+        print("\nTIMING:")
         print(f"  API init:    {init_time:.2f}s (one-time)")
         print(f"  Transcribe:  {transcribe_time:.2f}s")
         print(f"  TOTAL:       {total_time:.2f}s")

@@ -3,7 +3,6 @@
 import logging
 import subprocess
 import shutil
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

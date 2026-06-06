@@ -1,7 +1,6 @@
 """System tray icon for Wispr Dragon UI."""
 
 import logging
-from pathlib import Path
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ class SystemTray:
         """
         try:
             from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
-            from PyQt6.QtGui import QIcon, QAction
+            from PyQt6.QtGui import QAction
         except ImportError:
             logger.warning("PyQt6 not available, skipping system tray")
             return False

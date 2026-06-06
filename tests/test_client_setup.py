@@ -6,7 +6,6 @@ separately offscreen once it exists.
 
 from __future__ import annotations
 
-import pytest
 
 from wispr_dragon.client.app import needs_setup, validate_setup
 from wispr_dragon.main import format_client_setup

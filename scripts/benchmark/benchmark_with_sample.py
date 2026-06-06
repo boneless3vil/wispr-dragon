@@ -53,7 +53,7 @@ def benchmark_local_whisper(audio):
 
         print("\nRESULTS:")
         print(f"  Text: {result.text if result.text else '(synthetic audio - no speech detected)'}")
-        print(f"\nTIMING:")
+        print("\nTIMING:")
         print(f"  Model load:  {load_time:.3f}s (one-time cost)")
         print(f"  Transcribe:  {transcribe_time:.3f}s")
         print(f"  TOTAL:       {total_time:.3f}s")
@@ -104,7 +104,7 @@ def benchmark_openai_api(audio):
 
         print("\nRESULTS:")
         print(f"  Text: {result.text}")
-        print(f"\nTIMING:")
+        print("\nTIMING:")
         print(f"  API init:    {init_time:.3f}s (one-time cost)")
         print(f"  Transcribe:  {transcribe_time:.3f}s")
         print(f"  TOTAL:       {total_time:.3f}s")
@@ -176,10 +176,10 @@ def main():
                 print(f"\n🚀 Local Whisper is {speedup:.0f}x FASTER than OpenAI API")
                 print(f"   Local:  {local['transcribe_time']:.3f}s per transcription")
                 print(f"   OpenAI: {openai['transcribe_time']:.3f}s per transcription")
-                print(f"\n💰 Cost comparison (for 1 hour of audio):")
-                print(f"   Local:  $0 (free)")
+                print("\n💰 Cost comparison (for 1 hour of audio):")
+                print("   Local:  $0 (free)")
                 print(f"   OpenAI: ${1 * 0.02:.2f} (at $0.02/min)")
-                print(f"\n✅ RECOMMENDATION: Use Local Whisper for speed & cost")
+                print("\n✅ RECOMMENDATION: Use Local Whisper for speed & cost")
 
         return 0
     else:

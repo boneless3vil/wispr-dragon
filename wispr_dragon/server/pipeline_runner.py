@@ -2,7 +2,6 @@
 
 import logging
 import numpy as np
-from pathlib import Path
 
 from wispr_dragon.config import Config
 from wispr_dragon.correction.dictionary import UserDictionary
@@ -11,7 +10,6 @@ from wispr_dragon.correction.post_processor import PostProcessor
 from wispr_dragon.engine import create_engine
 from wispr_dragon.macros.macro_runner import MacroRunner
 from wispr_dragon.modes.mode_manager import ModeManager, Mode
-from wispr_dragon.output.text_injector import TextInjector
 
 logger = logging.getLogger(__name__)
 

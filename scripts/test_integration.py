@@ -19,9 +19,6 @@ def test_with_openai_api():
     """Test full pipeline with OpenAI API engine."""
     import os
     import numpy as np
-    from wispr_dragon.config import Config
-    from wispr_dragon.audio.capture import AudioCapture
-    from wispr_dragon.audio.vad import VoiceActivityDetector
     from wispr_dragon.engine.openai_api_engine import OpenAIAPIEngine
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -49,7 +46,7 @@ def test_with_openai_api():
             initial_prompt="",
         )
 
-        print(f"✓ Transcription completed")
+        print("✓ Transcription completed")
         print(f"  Text: {result.text[:100] if result.text else '(empty)'}")
         print(f"  Duration: {result.duration:.2f}s")
 
@@ -66,8 +63,6 @@ def test_with_local_engine():
     """Test full pipeline with local transcription engine."""
     import numpy as np
     from wispr_dragon.config import Config
-    from wispr_dragon.audio.capture import AudioCapture
-    from wispr_dragon.audio.vad import VoiceActivityDetector
     from wispr_dragon.main import create_engine
 
     print("\n--- Integration Test: Local Transcription Engine ---")
@@ -81,7 +76,7 @@ def test_with_local_engine():
             print(f"✗ Engine {engine.name} not available")
             return False
 
-        print(f"✓ Engine available, loading model...")
+        print("✓ Engine available, loading model...")
         engine.load_model(
             model_size=config.engine.model_size,
             device=config.engine.device,
@@ -98,7 +93,7 @@ def test_with_local_engine():
             language="en",
         )
 
-        print(f"✓ Transcription completed")
+        print("✓ Transcription completed")
         print(f"  Text: '{result.text}'")
         print(f"  Language: {result.language}")
 
@@ -113,7 +108,6 @@ def test_with_local_engine():
 
 def test_audio_capture_integration():
     """Test audio capture with VAD."""
-    import numpy as np
     from wispr_dragon.audio.capture import AudioCapture
     from wispr_dragon.audio.vad import VoiceActivityDetector
 
@@ -148,7 +142,7 @@ def test_audio_capture_integration():
 
         capture.stop()
 
-        print(f"✓ Audio capture completed")
+        print("✓ Audio capture completed")
         print(f"  Speech segments detected: {speech_segments}")
         print(f"  Silent blocks: {silence_blocks}")
 
