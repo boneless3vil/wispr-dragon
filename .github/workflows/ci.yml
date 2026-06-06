@@ -10,6 +10,10 @@ jobs:
   test:
     name: Lint & Test
     runs-on: ${{ matrix.os }}
+    env:
+      # PyQt6 widget tests construct a QApplication; the runners are headless,
+      # so force Qt's offscreen platform plugin (no X/Wayland display needed).
+      QT_QPA_PLATFORM: offscreen
     strategy:
       matrix:
         os: ["ubuntu-latest", "windows-latest"]
