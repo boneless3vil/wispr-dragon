@@ -40,6 +40,7 @@ jobs:
         run: ruff check .
 
       - name: Type check (mypy) - optional
+        shell: bash
         run: |
           if command -v mypy >/dev/null 2>&1; then
             mypy --strict wispr_dragon || true

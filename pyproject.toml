@@ -32,7 +32,7 @@ client = [
     "PyQt6>=6.7",
     "qasync>=0.27",
 ]
-dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.6", "mypy>=1.8"]
 
 [project.urls]
 Homepage = "https://github.com/yourusername/wispr_dragon"
