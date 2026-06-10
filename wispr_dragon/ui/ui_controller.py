@@ -59,6 +59,8 @@ class UIController:
         # Single source of truth for the OFF/STANDBY/HOT mic indicator.
         from .mic_state import MicStateController
         self.mic_state = MicStateController()
+        # Mic state captured at pause time, restored on resume (see _toggle_mic).
+        self._pre_pause_state = None
 
         # System tray — provides the Commands & Vocabulary browser entry point
         # and a mic-state indicator. Created in start(); None if unavailable.
@@ -252,11 +254,20 @@ class UIController:
 
     def _toggle_mic(self, paused: bool) -> None:
         """Mic button callback — gate audio capture and reflect it in mic state."""
+        from .mic_state import MicState
+
         if self.audio_worker:
             self.audio_worker.set_paused(paused)
-        # Paused => mic gated off (gray dot); resumed => hot (green). Same source
-        # of truth as sleep/wake.
-        self.mic_state.set_capturing(not paused)
+        # Paused => mic gated off (gray dot). Resuming restores the pre-pause
+        # state rather than forcing HOT, so pausing a sleeping (STANDBY) session
+        # and resuming doesn't silently wake the mic.
+        if paused:
+            self._pre_pause_state = self.mic_state.state
+            self.mic_state.set_capturing(False)
+        else:
+            self.mic_state.set_capturing(True)
+            if self._pre_pause_state == MicState.STANDBY:
+                self.mic_state.set_asleep(True)
 
     def _apply_backend_hint(self) -> None:
         """Surface a hint in the box when the injection backend has caveats."""

@@ -239,6 +239,12 @@ def _handle_ui_mode(config: Config, inject_method: str = "auto") -> int:
 
         app = QApplication.instance() or QApplication(sys.argv)
 
+        # App-level icon (fallback for any window that doesn't set its own).
+        from .ui.icons import mic_off_icon
+        _app_icon = mic_off_icon()
+        if _app_icon is not None:
+            app.setWindowIcon(_app_icon)
+
         logger.info("Starting UI mode...")
         dictionary = UserDictionary()
         post_processor = PostProcessor(
