@@ -38,6 +38,13 @@ class FasterWhisperEngine(TranscriptionEngine):
         if compute_type == "auto":
             compute_type = "float16" if device in ("cuda", "rocm") else "int8"
 
+        # CTranslate2 (CUDA-12 build) dlopens cuBLAS/cuDNN by soname at first
+        # inference. Preload the CUDA-12 libs now so that lookup succeeds even
+        # when torch supplies a different CUDA major. No-op off CUDA.
+        if device == "cuda":
+            from ._cuda_libs import preload_cuda12_libs
+            preload_cuda12_libs()
+
         logger.info(
             "Loading faster-whisper model=%s device=%s compute_type=%s",
             model_size, device, compute_type,
