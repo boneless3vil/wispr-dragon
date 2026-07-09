@@ -28,7 +28,12 @@ class AudioConfig:
     channels: int = 1
     dtype: str = "int16"
     vad_threshold: float = 0.5
-    silence_duration_ms: int = 500
+    # How much trailing silence closes a speech segment. Each segment is
+    # transcribed independently, so a short value shreds one sentence into
+    # fragments ("a result." / "is due to.") and robs Whisper of the context it
+    # needs — accuracy drops sharply below ~5 s of audio. 900 ms rides over the
+    # natural pauses inside a sentence while still ending an utterance promptly.
+    silence_duration_ms: int = 900
     min_speech_duration_ms: int = 250
     source: str = "pulseaudio"  # "pulseaudio" or "network"
     network_host: str = "0.0.0.0"

@@ -25,8 +25,11 @@ dependencies = [
 # an index override, e.g.:
 #   CPU:  pip install torch --index-url https://download.pytorch.org/whl/cpu
 #   ROCm: pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
-# faster-whisper (CTranslate2) uses CUDA/CPU only — AMD GPUs accelerate via the
-# openai-whisper engine on a ROCm torch, not faster-whisper.
+# AMD: CTranslate2 gained an official ROCm/HIP backend in v4.7.0 (2026-02), and
+# upstream ships ROCm wheels. faster-whisper therefore *can* drive an AMD GPU —
+# install a ROCm-built ctranslate2 and keep passing device="cuda" (it's a
+# hipified port of the CUDA backend, not a separate device type). The cu12
+# cuBLAS/cuDNN preload below is NVIDIA-only and is skipped on such a build.
 #
 # CUDA note: CTranslate2 4.x is built against CUDA 12 and dlopens libcublas.so.12
 # / libcudnn.so.9 at inference (the engine preloads them — see
