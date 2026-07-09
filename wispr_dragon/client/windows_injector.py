@@ -257,12 +257,20 @@ class WindowsTextInjector:
     def _paste(self, text: str) -> bool:
         """Set the clipboard to ``text``, send Ctrl+V, then restore the clipboard.
 
-        Falls back to per-character SendInput if the clipboard set fails.
+        Deliberately does NOT fall back to per-character SendInput. On systems
+        where a keyboard hook mangles synthesized keystrokes, that fallback
+        silently emits corrupted text ("I checked" -> "I eeecked") — far worse
+        than injecting nothing. Callers who want the keystroke path must opt in
+        with ``method="sendinput"``.
         """
         saved = self._get_clipboard_text()
         if not self._set_clipboard_text(text):
-            logger.warning("Clipboard unavailable; falling back to keystroke injection")
-            return self._send(_text_to_inputs(text))
+            logger.error(
+                "Could not take the clipboard; skipping injection of %d chars. "
+                "Another app may be holding it. Set inject_method='sendinput' to "
+                "type instead of paste.", len(text),
+            )
+            return False
         ok = self._send(_ctrl_v_inputs())
         # Let the target consume the paste before restoring the prior clipboard.
         time.sleep(_PASTE_SETTLE_S)
