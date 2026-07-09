@@ -23,14 +23,26 @@ from wispr_dragon.server.websocket_server import WebSocketServer
 # --- test doubles ----------------------------------------------------------
 
 class FakePipeline:
-    """Stub PipelineRunner — returns a canned transcript for any audio chunk."""
+    """Stub PipelineRunner — returns a canned transcript for any audio.
+
+    Counts the two entry points separately so tests can prove which
+    segmentation path ran: ``process`` (per-VAD-segment, legacy) versus
+    ``process_utterance`` (whole hotkey-delimited utterance, one pass).
+    """
 
     def __init__(self, transcript="hello world"):
         self.transcript = transcript
         self.process_calls = 0
+        self.utterance_calls = 0
+        self.utterance_samples = []
 
     def process(self, audio):
         self.process_calls += 1
+        return self.transcript
+
+    def process_utterance(self, audio, trim=True):
+        self.utterance_calls += 1
+        self.utterance_samples.append(len(audio))
         return self.transcript
 
 
@@ -41,11 +53,18 @@ class _ServerCfg:
         self.api_key = api_key
 
 
-class FakeConfig:
-    """Minimal stand-in for Config — WebSocketServer only touches ``.server``."""
+class _AudioCfg:
+    def __init__(self, max_utterance_seconds=25):
+        self.sample_rate = 16000
+        self.max_utterance_seconds = max_utterance_seconds
 
-    def __init__(self, port, api_key=""):
+
+class FakeConfig:
+    """Minimal stand-in for Config — WebSocketServer touches ``.server``/``.audio``."""
+
+    def __init__(self, port, api_key="", max_utterance_seconds=25):
         self.server = _ServerCfg("127.0.0.1", port, api_key)
+        self.audio = _AudioCfg(max_utterance_seconds)
 
 
 # --- helpers ---------------------------------------------------------------
@@ -126,6 +145,25 @@ async def _drive_client(client, *, settle=0.0):
     return received, shutdown
 
 
+async def _drive_client_manual(client):
+    """Run a client whose queue the test fills by hand (no auto frame feeder).
+
+    Lets a test interleave control frames and audio in a precise order, which is
+    exactly what utterance framing depends on.
+    """
+    received = []
+    client.on_transcript = received.append
+    queue = asyncio.Queue()
+    client_task = asyncio.create_task(client.run(queue))
+    await _wait_for(lambda: client._running or client_task.done(), timeout=2)
+
+    async def shutdown():
+        client.stop()
+        await asyncio.gather(client_task, return_exceptions=True)
+
+    return received, queue, shutdown
+
+
 # --- tests -----------------------------------------------------------------
 
 def test_transcript_roundtrip():
@@ -147,6 +185,148 @@ def test_transcript_roundtrip():
         assert got, "client never received a transcript"
         assert received[0] == "the quick brown fox"
         assert pipeline.process_calls > 0
+
+    asyncio.run(scenario())
+
+
+def test_legacy_client_still_uses_vad_segmentation():
+    """A client that never sends utterance frames keeps the old behavior.
+
+    This is the backward-compatibility guarantee: utterance mode is opt-in, so
+    an older client must still get transcripts via per-segment ``process()``.
+    """
+
+    async def scenario():
+        port = _free_port()
+        pipeline = FakePipeline("legacy path")
+        _, server_task = await _start_server(FakeConfig(port), pipeline)
+
+        client = WebSocketClient(f"ws://127.0.0.1:{port}", api_key="")
+        received, shutdown = await _drive_client(client)
+        try:
+            got = await _wait_for(lambda: len(received) > 0)
+        finally:
+            await shutdown()
+            await _stop_server(server_task)
+
+        assert got
+        assert pipeline.process_calls > 0, "legacy client should hit process()"
+        assert pipeline.utterance_calls == 0, "must not enter utterance mode"
+
+    asyncio.run(scenario())
+
+
+def test_server_advertises_utterance_feature():
+    """The client learns from `ready` that the server understands utterances."""
+
+    async def scenario():
+        port = _free_port()
+        _, server_task = await _start_server(FakeConfig(port), FakePipeline())
+
+        client = WebSocketClient(f"ws://127.0.0.1:{port}", api_key="")
+        _, _, shutdown = await _drive_client_manual(client)
+        try:
+            advertised = await _wait_for(lambda: client.supports("utterance"), timeout=5)
+        finally:
+            await shutdown()
+            await _stop_server(server_task)
+
+        assert advertised, "server should advertise the 'utterance' feature"
+
+    asyncio.run(scenario())
+
+
+def test_utterance_yields_exactly_one_transcript():
+    """start + N frames + end => ONE transcription of the whole buffer.
+
+    This is the fragmentation fix: the hotkey delimits the utterance, so a
+    sentence with pauses must not be split into several transcripts.
+    """
+
+    async def scenario():
+        port = _free_port()
+        pipeline = FakePipeline("one clean sentence")
+        _, server_task = await _start_server(FakeConfig(port), pipeline)
+
+        client = WebSocketClient(f"ws://127.0.0.1:{port}", api_key="")
+        received, queue, shutdown = await _drive_client_manual(client)
+        try:
+            assert await _wait_for(lambda: client.supports("utterance"), timeout=5)
+
+            queue.put_nowait({"type": "utterance_start", "id": "u1"})
+            for _ in range(20):  # 20 x 480 samples = 9600 samples
+                queue.put_nowait(FRAME)
+            queue.put_nowait({"type": "utterance_end", "id": "u1"})
+
+            got = await _wait_for(lambda: len(received) > 0, timeout=10)
+            # Give any (incorrect) extra transcripts a chance to show up.
+            await asyncio.sleep(0.5)
+        finally:
+            await shutdown()
+            await _stop_server(server_task)
+
+        assert got, "no transcript for the utterance"
+        assert received == ["one clean sentence"], f"expected one transcript, got {received}"
+        assert pipeline.utterance_calls == 1
+        assert pipeline.process_calls == 0, "utterance mode must not transcribe per chunk"
+        assert pipeline.utterance_samples == [20 * 480], "whole buffer should be transcribed"
+
+    asyncio.run(scenario())
+
+
+def test_max_utterance_valve_force_finalizes():
+    """A held hotkey can't buffer forever — the valve finalizes without an end."""
+
+    async def scenario():
+        port = _free_port()
+        pipeline = FakePipeline("forced flush")
+        # 1 second cap => 16000 samples => ~34 frames of 480.
+        cfg = FakeConfig(port, max_utterance_seconds=1)
+        _, server_task = await _start_server(cfg, pipeline)
+
+        client = WebSocketClient(f"ws://127.0.0.1:{port}", api_key="")
+        received, queue, shutdown = await _drive_client_manual(client)
+        try:
+            assert await _wait_for(lambda: client.supports("utterance"), timeout=5)
+
+            queue.put_nowait({"type": "utterance_start", "id": "u1"})
+            for _ in range(40):  # 19200 samples > 16000 cap
+                queue.put_nowait(FRAME)
+            # Deliberately never send utterance_end.
+            got = await _wait_for(lambda: len(received) > 0, timeout=10)
+        finally:
+            await shutdown()
+            await _stop_server(server_task)
+
+        assert got, "valve should force-finalize a too-long utterance"
+        assert pipeline.utterance_calls >= 1
+
+    asyncio.run(scenario())
+
+
+def test_disconnect_mid_utterance_discards_buffer():
+    """Dropping the socket between start and end yields no transcript, no crash."""
+
+    async def scenario():
+        port = _free_port()
+        pipeline = FakePipeline("should never arrive")
+        _, server_task = await _start_server(FakeConfig(port), pipeline)
+
+        client = WebSocketClient(f"ws://127.0.0.1:{port}", api_key="")
+        received, queue, shutdown = await _drive_client_manual(client)
+        try:
+            assert await _wait_for(lambda: client.supports("utterance"), timeout=5)
+            queue.put_nowait({"type": "utterance_start", "id": "u1"})
+            for _ in range(10):
+                queue.put_nowait(FRAME)
+            await asyncio.sleep(0.4)  # let the frames land in the server buffer
+        finally:
+            await shutdown()  # disconnect without utterance_end
+            await asyncio.sleep(0.4)
+            await _stop_server(server_task)
+
+        assert received == [], "a partial utterance must not be transcribed"
+        assert pipeline.utterance_calls == 0
 
     asyncio.run(scenario())
 

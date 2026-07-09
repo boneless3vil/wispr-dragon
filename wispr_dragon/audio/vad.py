@@ -114,6 +114,52 @@ class VoiceActivityDetector:
 
         return None
 
+    def trim(self, audio: np.ndarray) -> Optional[np.ndarray]:
+        """Trim leading/trailing silence from one complete utterance.
+
+        Unlike :meth:`process_chunk`, this never splits the audio: it returns a
+        single slice spanning the first speech onset to the last offset (padded
+        by ``speech_pad_ms``), so a mid-sentence pause stays inside the result.
+        That's what makes utterance-scoped transcription possible — the hotkey
+        decides the boundary, the VAD only shaves the dead air off the ends.
+
+        Returns:
+            The trimmed float32 audio, or None if there's no speech (an
+            accidental hotkey tap) or too little to be worth transcribing.
+        """
+        import torch
+
+        if self._model is None:
+            raise RuntimeError("VAD model not loaded. Call load() first.")
+
+        if audio.ndim > 1:
+            audio = audio.flatten()
+        if audio.size == 0:
+            return None
+
+        # Silero is a streaming RNN: clear hidden state before and after so this
+        # one-shot call neither inherits nor leaks state across utterances.
+        self._model.reset_states()
+        try:
+            stamps = self._get_speech_timestamps(
+                torch.from_numpy(audio).float(),
+                self._model,
+                sampling_rate=self.sample_rate,
+                threshold=self.threshold,
+            )
+        finally:
+            self._model.reset_states()
+
+        if not stamps:
+            return None
+
+        start = max(0, stamps[0]["start"] - self.speech_pad_samples)
+        end = min(len(audio), stamps[-1]["end"] + self.speech_pad_samples)
+        segment = audio[start:end]
+        if len(segment) < self.min_speech_samples:
+            return None
+        return segment
+
     def reset(self) -> None:
         """Reset the VAD state."""
         self._speech_buffer.clear()

@@ -122,28 +122,65 @@ class PipelineRunner:
             else:
                 audio_data = audio.flatten()
 
-            if audio_data.size == 0:
-                return ""
-
-            result = self.engine.transcribe(
-                audio_data,
-                language=self.config.engine.language,
-                initial_prompt=self.hotword_mgr.get_initial_prompt() if self.hotword_mgr else "",
-                hotwords=self.hotword_mgr.get_hotwords() if self.hotword_mgr else "",
-                beam_size=self.config.engine.beam_size,
-            )
-
-            if not result or not result.text.strip():
-                return ""
-
-            apply_formatting = self.mode_mgr.mode == Mode.DICTATION if self.mode_mgr else True
-            processed = self.post_processor.process(result.text, apply_formatting=apply_formatting)
-
-            return processed
+            return self._transcribe_and_format(audio_data)
 
         except Exception as e:
             logger.error("Error processing audio: %s", e)
             return ""
+
+    def process_utterance(self, audio: np.ndarray, trim: bool = True) -> str:
+        """Transcribe one complete utterance in a single pass.
+
+        The caller (the server, on ``utterance_end``) has already buffered the
+        whole hotkey-delimited utterance. Transcribing it as one unit — rather
+        than per VAD segment — is what stops a sentence with natural pauses from
+        being shredded into context-starved fragments.
+
+        Args:
+            audio: the whole utterance, float32.
+            trim: shave leading/trailing silence with the VAD (never splits).
+
+        Returns:
+            Post-processed text, or "" if there was no speech.
+        """
+        if not self.engine:
+            logger.error("Pipeline not loaded")
+            return ""
+        if not isinstance(audio, np.ndarray) or audio.size == 0:
+            return ""
+
+        try:
+            audio_data = audio.flatten()
+            if trim and self.vad is not None:
+                trimmed = self.vad.trim(audio_data)
+                if trimmed is None:
+                    return ""  # silence only — e.g. an accidental hotkey tap
+                audio_data = trimmed
+
+            return self._transcribe_and_format(audio_data)
+
+        except Exception as e:
+            logger.error("Error processing utterance: %s", e)
+            return ""
+
+    def _transcribe_and_format(self, audio_data: np.ndarray) -> str:
+        """Run the engine over ready-to-transcribe audio and post-process it."""
+        if audio_data.size == 0:
+            return ""
+
+        result = self.engine.transcribe(
+            audio_data,
+            language=self.config.engine.language,
+            initial_prompt=self.hotword_mgr.get_initial_prompt() if self.hotword_mgr else "",
+            hotwords=self.hotword_mgr.get_hotwords() if self.hotword_mgr else "",
+            beam_size=self.config.engine.beam_size,
+        )
+
+        if not result or not result.text.strip():
+            return ""
+
+        apply_formatting = self.mode_mgr.mode == Mode.DICTATION if self.mode_mgr else True
+        return self.post_processor.process(result.text, apply_formatting=apply_formatting)
 
     def unload(self) -> None:
         """Cleanup resources."""

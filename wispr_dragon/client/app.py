@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -127,6 +128,8 @@ class WisprDragonClient:
         self._last_injection_text: Optional[str] = None
         self._last_injection_len = 0
         self._correction_dialog = None  # held during exec()
+        # Correlates utterance_start/end with the transcript the server returns.
+        self._utterance_id: Optional[str] = None
 
     def _load_config(self) -> dict:
         """Load client configuration.
@@ -169,8 +172,9 @@ class WisprDragonClient:
                 "transcripts will only be printed"
             )
         logger.info(
-            "Text injection: %s",
+            "Text injection: %s (method=%s)",
             "on" if (self.inject_enabled and self.injector.available) else "off",
+            self.injector.method,
         )
 
         # First-run setup: if the client has no usable config, prompt for the
@@ -376,20 +380,46 @@ class WisprDragonClient:
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._apply_active, active)
 
+    def _utterance_framing(self) -> bool:
+        """True when the server can transcribe a whole hotkey-delimited utterance."""
+        return self.ws_client is not None and self.ws_client.supports("utterance")
+
+    def _enqueue_control(self, message: dict) -> None:
+        """Queue a control frame behind any pending audio (order matters)."""
+        if self.audio_queue is None:
+            return
+        try:
+            self.audio_queue.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.warning("Audio queue full — dropped control frame %s", message.get("type"))
+
     def _apply_active(self, active: bool) -> None:
-        """Mic gate change — runs on the asyncio event loop thread."""
+        """Mic gate change — runs on the asyncio event loop thread.
+
+        The hotkey is the utterance boundary. Against a server that understands
+        utterance framing we say so explicitly, and the whole utterance is
+        transcribed in one pass. Against an older server we fall back to the
+        silence-flush hack, which nudges its VAD into closing the last segment.
+        """
         if active:
+            if self._utterance_framing():
+                self._utterance_id = uuid.uuid4().hex
+                self._enqueue_control({"type": "utterance_start", "id": self._utterance_id})
             self.audio_capture.set_paused(False)
             logger.info("🎤 Recording ON — speak now")
         else:
-            # Inject a brief tail of silence so the server's VAD flushes the
-            # last segment instead of leaving it buffered.
-            for _ in range(_FLUSH_FRAMES):
-                try:
-                    self.audio_queue.put_nowait(_SILENCE_FRAME)
-                except asyncio.QueueFull:
-                    break
             self.audio_capture.set_paused(True)
+            if self._utterance_framing():
+                self._enqueue_control({"type": "utterance_end", "id": self._utterance_id})
+                self._utterance_id = None
+            else:
+                # Legacy server: inject a tail of silence so its VAD flushes the
+                # last segment instead of leaving it buffered.
+                for _ in range(_FLUSH_FRAMES):
+                    try:
+                        self.audio_queue.put_nowait(_SILENCE_FRAME)
+                    except asyncio.QueueFull:
+                        break
             logger.info("Recording OFF")
         if self.tray is not None:
             self.tray.update_recording_state(active)
