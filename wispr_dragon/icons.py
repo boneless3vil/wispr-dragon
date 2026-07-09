@@ -1,5 +1,11 @@
 """Application icon assets and mic-state → icon mapping.
 
+Lives at the package root, *not* under ``ui/``, because the headless Windows
+client's tray needs these icons but must not import ``wispr_dragon.ui``: that
+package's ``__init__`` eagerly pulls in the whole desktop UI stack, and with it
+server-side deps (``rapidfuzz``) the lean client venv doesn't install. Importing
+this module costs nothing but PyQt6.
+
 Two bundled PNGs back the mic indicator:
 
 - ``mic_on.png``  — red, glowing: the mic is HOT (capturing + transcribing).
@@ -123,7 +129,12 @@ def icon_for_mic_state(state) -> Optional[object]:
     """Map a MicState to its QIcon. HOT → on icon; OFF/STANDBY → off icon.
 
     Returns None if Qt or the asset is unavailable so callers can no-op safely.
+
+    The MicState import is deliberately deferred: it lives under ``ui``, so
+    importing it at module scope would drag the desktop UI into the client.
+    Only the desktop UI calls this function; the client tray uses the two
+    ``mic_*_icon`` helpers directly.
     """
-    from .mic_state import MicState
+    from .ui.mic_state import MicState
 
     return mic_on_icon() if state == MicState.HOT else mic_off_icon()

@@ -69,8 +69,10 @@ wispr_dragon = "wispr_dragon.main:main"
 include = ["wispr_dragon*"]
 
 [tool.setuptools.package-data]
-# Bundle the mic on/off tray + window icons into the wheel.
-"wispr_dragon.ui" = ["assets/*.png"]
+# Bundle the mic on/off tray + window icons into the wheel. They live at the
+# package root (not under ui/) so the headless client can use them without
+# importing the desktop UI stack.
+"wispr_dragon" = ["assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

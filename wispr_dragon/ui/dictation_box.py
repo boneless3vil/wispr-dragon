@@ -159,7 +159,7 @@ class DictationBox(QObject):
 
         # Window/taskbar icon — starts OFF; _paint_mic_state swaps to the red HOT
         # mic while recording so the taskbar mirrors the live indicator.
-        from .icons import mic_off_icon
+        from ..icons import mic_off_icon
         _win_icon = mic_off_icon()
         if _win_icon is not None:
             self.window.setWindowIcon(_win_icon)
@@ -288,7 +288,7 @@ class DictationBox(QObject):
     def _paint_mic_state(self, state) -> None:
         """Recolor the dot + label for the given MicState (GUI thread)."""
         from .mic_state import MicState
-        from .icons import icon_for_mic_state
+        from ..icons import icon_for_mic_state
         self.is_recording = state != MicState.OFF
         # Mirror the state in the window/taskbar icon (red mic = HOT).
         _icon = icon_for_mic_state(state)

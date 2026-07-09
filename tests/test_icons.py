@@ -10,7 +10,7 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-from wispr_dragon.ui import icons  # noqa: E402
+from wispr_dragon import icons  # noqa: E402
 from wispr_dragon.ui.mic_state import MicState  # noqa: E402
 
 
@@ -19,6 +19,25 @@ def _app():
     """A QApplication is required to construct QIcon/QPixmap objects."""
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+def test_icons_module_does_not_import_the_desktop_ui():
+    """The headless client's tray imports icons — it must stay UI-free.
+
+    `wispr_dragon.ui.__init__` eagerly imports the whole desktop stack, pulling
+    in server-side deps (rapidfuzz) the lean client venv doesn't install. When
+    icons lived under ui/, that silently disabled the client's tray icon.
+    Run in a subprocess so a clean sys.modules is guaranteed.
+    """
+    import subprocess
+    import sys as _sys
+
+    code = (
+        "import sys; import wispr_dragon.icons; "
+        "assert 'wispr_dragon.ui' not in sys.modules, "
+        "'importing icons must not pull in wispr_dragon.ui'"
+    )
+    subprocess.run([_sys.executable, "-c", code], check=True)
 
 
 def test_asset_files_exist():

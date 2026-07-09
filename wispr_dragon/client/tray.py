@@ -112,7 +112,9 @@ class TrayApp:
         if app is None or self.tray is None:
             return
 
-        from wispr_dragon.ui.icons import mic_off_icon, mic_on_icon
+        # Package-root module: importing wispr_dragon.ui here would pull the
+        # desktop UI stack (and rapidfuzz) into the lean client venv.
+        from wispr_dragon.icons import mic_off_icon, mic_on_icon
 
         icon = mic_on_icon() if active else mic_off_icon()
         if icon is None:

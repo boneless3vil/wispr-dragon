@@ -54,7 +54,7 @@ class SystemTray:
         # the red HOT icon once capture begins. Without an icon the tray shows a
         # blank/placeholder square on most desktops.
         self.tray_widget = QSystemTrayIcon(app)
-        from .icons import mic_off_icon
+        from ..icons import mic_off_icon
         off = mic_off_icon()
         if off is not None:
             self.tray_widget.setIcon(off)
@@ -126,7 +126,7 @@ class SystemTray:
             self.tray_widget.setToolTip(tooltip)
             # Swap the tray artwork: red mic when HOT, black otherwise (OFF and
             # STANDBY both show the off icon — the label/tooltip carry the nuance).
-            from .icons import icon_for_mic_state
+            from ..icons import icon_for_mic_state
             icon = icon_for_mic_state(state)
             if icon is not None:
                 self.tray_widget.setIcon(icon)
