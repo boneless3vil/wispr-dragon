@@ -21,6 +21,31 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path.home() / "AppData" / "Local" / "WisprDragon" / "config.json"
 
+# Loopback port used purely as a single-instance lock. A second client is
+# actively harmful: the server accepts one connection, so the loser sits in a
+# reconnect storm, and *both* instances hold a global hotkey listener and the
+# microphone. Binding a port (rather than writing a lock file) means the OS
+# reclaims the lock when the process dies — no stale state to clean up.
+_SINGLE_INSTANCE_PORT = 47653
+
+
+def acquire_single_instance(port: int = _SINGLE_INSTANCE_PORT):
+    """Return a bound socket acting as the instance lock, or None if one exists.
+
+    The caller must keep the returned socket alive for the process lifetime.
+    SO_REUSEADDR is deliberately NOT set — we want the second bind to fail.
+    """
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+        sock.listen(1)
+        return sock
+    except OSError:
+        sock.close()
+        return None
+
 
 def needs_setup(config: dict) -> bool:
     """True when the client isn't ready to connect and should run first-run setup.
@@ -82,7 +107,11 @@ class WisprDragonClient:
         self.audio_queue = None
         self._running = False
         self.inject_enabled = inject
-        self.injector = WindowsTextInjector()
+        # Injection method from config: "paste" (clipboard + Ctrl+V, default,
+        # robust against keystroke-mangling hooks) or "sendinput" (per-char).
+        self.injector = WindowsTextInjector(
+            method=self.config.get("inject_method", "paste")
+        )
         self._mode_override = mode
         self.no_tray = no_tray
         self.hotkey: Optional[Hotkey] = None
@@ -119,6 +148,7 @@ class WisprDragonClient:
             "device": None,
             "mode": "ptt",
             "hotkey": "ctrl_r",
+            "inject_method": "paste",
         }
 
     def _save_config(self) -> None:
@@ -482,6 +512,18 @@ def main():
         WindowsAudioCapture.list_devices()
         return 0
 
+    # Refuse to start a second client. Two instances fight over the single
+    # server connection, the global hotkey, and the microphone. Held for the
+    # process lifetime (released by the OS on exit).
+    instance_lock = acquire_single_instance()
+    if instance_lock is None:
+        logger.error(
+            "Another Wispr Dragon client is already running. The server accepts "
+            "only one connection, and a second client would also grab the hotkey "
+            "and microphone. Quit the other instance first."
+        )
+        return 3
+
     client = WisprDragonClient(
         config_path=(Path(args.config) if args.config else None),
         inject=not args.no_inject,
@@ -527,6 +569,10 @@ def _run_with_tray(client) -> int:
     qt_app = QApplication.instance() or QApplication(sys.argv)
     # Closing the (invisible) tray "window" should not exit the program.
     qt_app.setQuitOnLastWindowClosed(False)
+    # If Qt quits by any route (tray Quit, session logout, window close), ask the
+    # client to wind down so run() can finish rather than being torn out from
+    # under qasync.
+    qt_app.aboutToQuit.connect(client.stop)
     loop = qasync.QEventLoop(qt_app)
     asyncio.set_event_loop(loop)
     with loop:
@@ -534,6 +580,14 @@ def _run_with_tray(client) -> int:
             loop.run_until_complete(client.run())
         except KeyboardInterrupt:
             pass
+        except RuntimeError as e:
+            # qasync raises "Event loop stopped before Future completed" when the
+            # Qt loop stops while run() is still unwinding. Shutdown has already
+            # happened at that point, so this is noise, not a failure — surfacing
+            # it as an unhandled exception showed users a crash dialog on Quit.
+            if "Event loop stopped before Future completed" not in str(e):
+                raise
+            logger.debug("Qt loop stopped during shutdown: %s", e)
     return 0
 
 

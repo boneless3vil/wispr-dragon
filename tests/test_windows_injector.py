@@ -12,6 +12,7 @@ from wispr_dragon.client.windows_injector import (
     INPUT,
     WindowsTextInjector,
     _backspaces,
+    _ctrl_v_inputs,
     _replace_last_inputs,
     _text_to_inputs,
 )
@@ -47,6 +48,33 @@ def test_bmp_accented_char_is_a_single_unit():
 def test_injector_constructs_on_any_platform():
     injector = WindowsTextInjector()
     assert injector.available == (sys.platform == "win32")
+
+
+# --- injection method selection ------------------------------------------
+
+def test_ctrl_v_inputs_is_a_four_event_chord():
+    # ctrl down, v down, v up, ctrl up
+    assert len(_ctrl_v_inputs()) == 4
+    assert all(isinstance(e, INPUT) for e in _ctrl_v_inputs())
+
+
+def test_default_method_is_paste():
+    assert WindowsTextInjector().method == "paste"
+
+
+def test_method_can_be_set_to_sendinput():
+    assert WindowsTextInjector(method="sendinput").method == "sendinput"
+
+
+def test_unknown_method_falls_back_to_paste():
+    assert WindowsTextInjector(method="nonsense").method == "paste"
+
+
+def test_set_method_switches_and_returns_effective():
+    inj = WindowsTextInjector()
+    assert inj.set_method("sendinput") == "sendinput"
+    assert inj.method == "sendinput"
+    assert inj.set_method("bogus") == "paste"  # invalid -> paste
 
 
 def test_inject_empty_text_returns_false():

@@ -103,16 +103,25 @@ class TrayApp:
     # --- internals --------------------------------------------------------
 
     def _refresh_icon(self, active: bool) -> None:
-        # Built-in Qt pixmaps as placeholders until a real Wispr Dragon icon
-        # is added — Play = recording, Pause = idle.
+        """Show the mic artwork for the current state (red = recording).
+
+        Falls back to Qt's built-in play/pause pixmaps if the bundled icons
+        can't be loaded, so the tray never ends up icon-less.
+        """
         app = QApplication.instance()
         if app is None or self.tray is None:
             return
-        which = (
-            QStyle.StandardPixmap.SP_MediaPlay if active
-            else QStyle.StandardPixmap.SP_MediaPause
-        )
-        self.tray.setIcon(app.style().standardIcon(which))
+
+        from wispr_dragon.ui.icons import mic_off_icon, mic_on_icon
+
+        icon = mic_on_icon() if active else mic_off_icon()
+        if icon is None:
+            which = (
+                QStyle.StandardPixmap.SP_MediaPlay if active
+                else QStyle.StandardPixmap.SP_MediaPause
+            )
+            icon = app.style().standardIcon(which)
+        self.tray.setIcon(icon)
 
     def _on_toggle_mode(self, checked: bool) -> None:
         mode = HotkeyMode.TOGGLE if checked else HotkeyMode.PTT
