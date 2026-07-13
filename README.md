@@ -2,6 +2,11 @@
 
 A powerful speech recognition application for Linux/WSL2 with support for multiple transcription backends.
 
+> 📖 **New here? See the [User Manual](docs/USER_MANUAL.md)** — how to run it,
+> the hotkey and microphone, dictating with spoken punctuation, voice commands
+> and modes, correction and vocabulary, macros, every keyboard shortcut, and a
+> full CLI + configuration reference.
+
 ## Features
 
 - **Multiple transcription engines:**
@@ -378,7 +383,7 @@ Contributions welcome! Please ensure:
 
 ## License
 
-MIT
+Apache 2.0 — see [LICENSE](LICENSE).
 
 ## Support
 
