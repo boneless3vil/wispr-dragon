@@ -33,6 +33,8 @@ FORMATTING_RULES = {
     "close quote": '"',
     "open paren": "(",
     "close paren": ")",
+    "open parenthesis": "(",
+    "close parenthesis": ")",
     "hyphen": "-",
     "dash": " -- ",
     "ellipsis": "...",
@@ -132,9 +134,33 @@ class PostProcessor:
             text = pattern.sub(replacement, text)
         # Clean up spaces before punctuation
         text = re.sub(r"\s+([.,!?;:])", r"\1", text)
+        # Collapse runs of adjacent punctuation to a single strongest mark. When
+        # you *say* "comma"/"period", the engine also auto-punctuates from your
+        # natural pauses, so the spoken mark collides with the model's own —
+        # producing ",," or ".," ("Hello,, world.,, ..."). Keep ellipsis intact.
+        text = self._collapse_adjacent_punctuation(text)
         # Capitalize first word after sentence-ending punctuation
         text = re.sub(r"([.!?]\s+)(\w)", lambda m: m.group(1) + m.group(2).upper(), text)
         return text
+
+    # Higher wins when several marks land next to each other.
+    _PUNCT_PRIORITY = {"?": 5, "!": 4, ".": 3, ";": 2, ":": 2, ",": 1}
+
+    def _collapse_adjacent_punctuation(self, text: str) -> str:
+        """Reduce a run of ``,.;:!?`` (optionally space-separated) to one mark.
+
+        Parentheses and quotes are left alone. Ellipsis (``...``) is protected so
+        it isn't crushed to a single dot.
+        """
+        sentinel = "\x00ELLIPSIS\x00"
+        text = text.replace("...", sentinel)
+
+        def strongest(match: re.Match) -> str:
+            marks = [c for c in match.group(0) if c in self._PUNCT_PRIORITY]
+            return max(marks, key=self._PUNCT_PRIORITY.__getitem__)
+
+        text = re.sub(r"[,.;:!?](?:\s*[,.;:!?])+", strongest, text)
+        return text.replace(sentinel, "...")
 
     def _apply_capitalization_rules(self, text: str) -> str:
         """Auto-capitalize proper nouns from the dictionary.

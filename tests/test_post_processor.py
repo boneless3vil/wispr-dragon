@@ -47,3 +47,32 @@ def test_phrase_replacement(processor):
 def test_capitalization(processor):
     result = processor.process("i talked to jonathan", apply_formatting=False)
     assert "Jonathan" in result
+
+
+# --- adjacent-punctuation collapse ---------------------------------------
+# When you say "comma"/"period" the engine also auto-punctuates from your
+# pauses, so the spoken mark collides with the model's own ("Hello,, world.,,").
+
+def test_doubled_comma_collapses(processor):
+    # Engine already put a comma in; the spoken "comma" adds another.
+    result = processor.process("hello, comma world", apply_formatting=True)
+    assert ",," not in result
+    assert "hello," in result
+
+
+def test_comma_then_period_keeps_period(processor):
+    # "one., this" -> the stronger sentence-ender wins.
+    result = processor.process("this is one period comma this is two", apply_formatting=True)
+    assert ".," not in result and ",." not in result
+    assert "one." in result
+
+
+def test_ellipsis_survives_collapse(processor):
+    result = processor.process("wait ellipsis really", apply_formatting=True)
+    assert "..." in result
+
+
+def test_repeated_period_collapses(processor):
+    result = processor.process("done period period", apply_formatting=True)
+    assert ".." not in result.replace("...", "")  # ignore any legit ellipsis
+    assert "done." in result
