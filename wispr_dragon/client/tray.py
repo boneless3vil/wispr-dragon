@@ -39,6 +39,9 @@ class TrayApp:
         self.toggle_action: QAction | None = None
         self.settings_action: QAction | None = None
         self.quit_action: QAction | None = None
+        # Remembered so a theme change can re-tint the icon for the *current*
+        # recording state, not just reset it to idle.
+        self._active = False
 
     def start(self) -> None:
         """Build the tray icon + menu. Requires a QApplication to exist."""
@@ -82,10 +85,23 @@ class TrayApp:
 
         self.tray.setContextMenu(self.menu)
         self.tray.show()
+
+        # Re-tint the icon when the OS switches light/dark, so a black mic never
+        # sits invisibly on a dark taskbar (or white on light). Without this the
+        # icon is computed once and goes stale on a theme change. Qt 6.5+ only.
+        hints = app.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_color_scheme_changed)
+
         logger.info("System tray icon ready")
+
+    def _on_color_scheme_changed(self, *_args) -> None:
+        """OS light/dark toggled — repaint the icon for the current state."""
+        self._refresh_icon(self._active)
 
     def update_recording_state(self, active: bool) -> None:
         """Reflect a hotkey state change in the tray label, tooltip, and icon."""
+        self._active = active
         if self.state_action is not None:
             self.state_action.setText("Recording: ON  ●" if active else "Recording: OFF")
         if self.tray is not None:
