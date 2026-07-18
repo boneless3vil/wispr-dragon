@@ -7,7 +7,7 @@ name = "wispr_dragon"
 version = "1.0.0"
 description = "Local speech recognition with Dragon NaturallySpeaking-like features"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [{name = "Jonathan Baldwin", email = "bonelessevil@gmail.com"}]
 requires-python = ">=3.11"
 dependencies = [
