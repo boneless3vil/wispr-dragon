@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -156,6 +157,13 @@ class DictationBox(QObject):
         )
         self.window.setStyleSheet(_STYLE_SHEET)
 
+        # Window/taskbar icon — starts OFF; _paint_mic_state swaps to the red HOT
+        # mic while recording so the taskbar mirrors the live indicator.
+        from ..icons import mic_off_icon
+        _win_icon = mic_off_icon()
+        if _win_icon is not None:
+            self.window.setWindowIcon(_win_icon)
+
         # Create central widget and layout
         central = QWidget()
         central.setObjectName("dictationRoot")
@@ -231,8 +239,17 @@ class DictationBox(QObject):
         central.setLayout(layout)
         self.window.setCentralWidget(central)
 
-        # Keyboard shortcuts
-        self.window.keyPressEvent = self._on_key_press
+        # Keyboard shortcuts. Use window-scoped QShortcuts (default
+        # WindowShortcut context) rather than overriding keyPressEvent: an
+        # override only fires when the QMainWindow itself has focus, so Enter/Esc
+        # were swallowed whenever a button or the transcript held focus.
+        for seq, slot in (
+            (QKeySequence(Qt.Key.Key_Return), self.post_text),
+            (QKeySequence(Qt.Key.Key_Enter), self.post_text),   # numpad Enter
+            (QKeySequence(Qt.Key.Key_Escape), self.cancel_recording),
+            (QKeySequence("Ctrl+L"), self.clear_text),
+        ):
+            QShortcut(seq, self.window).activated.connect(slot)
 
         # Route worker-thread emits through Qt's queued connection so all widget
         # mutation happens on the GUI thread.
@@ -271,7 +288,12 @@ class DictationBox(QObject):
     def _paint_mic_state(self, state) -> None:
         """Recolor the dot + label for the given MicState (GUI thread)."""
         from .mic_state import MicState
+        from ..icons import icon_for_mic_state
         self.is_recording = state != MicState.OFF
+        # Mirror the state in the window/taskbar icon (red mic = HOT).
+        _icon = icon_for_mic_state(state)
+        if _icon is not None:
+            self.window.setWindowIcon(_icon)
         if state == MicState.HOT:
             self.status_dot.setStyleSheet(f"color: {_ACCENT};")
             self.status_text.setText("Recording")
@@ -311,6 +333,13 @@ class DictationBox(QObject):
         """Pause/resume audio capture without ending the session (Mic button)."""
         self._mic_paused = not self._mic_paused
         self.mic_btn.setText("Resume Mic" if self._mic_paused else "Pause Mic")
+        # Freeze the elapsed counter while paused so the timer reflects active
+        # dictation time, not wall-clock — resuming continues from where it left
+        # off. The mic-state dot is repainted by UIController via the observer.
+        if self._mic_paused:
+            self._timer.stop()
+        else:
+            self._timer.start()
         if self.on_toggle_mic:
             self.on_toggle_mic(self._mic_paused)
         self.status_bar.showMessage("Mic paused" if self._mic_paused else "Mic live")
@@ -331,17 +360,6 @@ class DictationBox(QObject):
     @pyqtSlot(str)
     def _apply_status_message(self, msg: str) -> None:
         self.status_bar.showMessage(msg)
-
-    def _on_key_press(self, event):
-        """Handle keyboard shortcuts."""
-        if event.key() == Qt.Key.Key_Return:
-            self.post_text()
-        elif event.key() == Qt.Key.Key_Escape:
-            self.cancel_recording()
-        elif event.key() == Qt.Key.Key_L and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self.clear_text()
-        else:
-            event.ignore()
 
     def update_transcription(self, live: str, final: Optional[str] = None):
         """Thread-safe entry point — emits a signal that runs on the GUI thread.
@@ -435,6 +453,9 @@ class DictationBox(QObject):
         self.final_text = ""
         self.live_text = ""
         self.text_display.clear()
+        # Clear starts a fresh dictation, so reset the elapsed counter too.
+        self._elapsed_seconds = 0
+        self.timer_label.setText("0:00")
         self.status_bar.showMessage("Cleared. Ready to record...")
 
     def cancel_recording(self):

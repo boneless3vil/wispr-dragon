@@ -50,8 +50,14 @@ class SystemTray:
         if not app:
             return False
 
-        # Create tray icon (use a simple emoji or fallback text)
+        # Create tray icon. Start with the OFF artwork; set_mic_state() swaps in
+        # the red HOT icon once capture begins. Without an icon the tray shows a
+        # blank/placeholder square on most desktops.
         self.tray_widget = QSystemTrayIcon(app)
+        from ..icons import mic_off_icon
+        off = mic_off_icon()
+        if off is not None:
+            self.tray_widget.setIcon(off)
         self.tray_widget.setToolTip("Wispr Dragon — Click to toggle dictation")
 
         # Create context menu
@@ -118,6 +124,12 @@ class SystemTray:
             self.toggle_action.setText(label)
         if self.tray_widget:
             self.tray_widget.setToolTip(tooltip)
+            # Swap the tray artwork: red mic when HOT, black otherwise (OFF and
+            # STANDBY both show the off icon — the label/tooltip carry the nuance).
+            from ..icons import icon_for_mic_state
+            icon = icon_for_mic_state(state)
+            if icon is not None:
+                self.tray_widget.setIcon(icon)
 
     def _on_show_clicked(self) -> None:
         """Handle Show Dictation Box action."""

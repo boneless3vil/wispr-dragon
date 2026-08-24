@@ -38,6 +38,14 @@ class WebSocketClient:
         self._running = False
         self._reconnect_count = 0
         self._max_reconnect_count = 10
+        # Capabilities advertised by the server in its `ready` payload. Empty
+        # until we connect (and for old servers that never send it), which is
+        # what the client uses to decide whether utterance framing is available.
+        self.server_features: list = []
+
+    def supports(self, feature: str) -> bool:
+        """True if the connected server advertised ``feature``."""
+        return feature in self.server_features
 
     async def connect(self) -> bool:
         """Connect to the WebSocket server.
@@ -136,7 +144,14 @@ class WebSocketClient:
                         msg_type = data.get("type")
 
                         if msg_type == "ready":
-                            logger.info("Server ready: %s", data.get("server_version"))
+                            self.server_features = list(data.get("features") or [])
+                            logger.info(
+                                "Server ready: %s (features=%s)",
+                                data.get("server_version"),
+                                self.server_features or "none",
+                            )
+                        elif msg_type == "utterance_ack":
+                            logger.debug("Utterance acked: %s", data.get("id"))
                         elif msg_type == "transcript":
                             text = data.get("text", "")
                             if text and self.on_transcript:
@@ -241,14 +256,22 @@ class WebSocketClient:
         logger.info("Client stopped")
 
     async def _feed_audio(self, audio_queue: asyncio.Queue) -> None:
-        """Feed audio from queue to server.
+        """Feed queued items to the server, preserving their order.
+
+        The queue carries two kinds of item:
+        * ``bytes`` — an audio frame, sent as a binary message.
+        * ``dict``  — a control frame (e.g. ``utterance_end``), sent as JSON.
+
+        Control frames MUST travel through this same queue rather than being
+        sent directly: otherwise an ``utterance_end`` would overtake audio still
+        waiting here and the server would finalize a truncated utterance.
 
         Args:
-            audio_queue: asyncio.Queue with audio chunks
+            audio_queue: asyncio.Queue of audio frames and control messages
         """
         while self._running and self.websocket:
             try:
-                audio_bytes = await asyncio.wait_for(audio_queue.get(), timeout=0.5)
+                item = await asyncio.wait_for(audio_queue.get(), timeout=0.5)
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -257,7 +280,10 @@ class WebSocketClient:
 
             # A failed send means the socket is dead — end the task so run()
             # tears the connection down and reconnects.
-            if audio_bytes and not await self.send_audio(audio_bytes):
+            if isinstance(item, dict):
+                if not await self.send_json(item):
+                    break
+            elif item and not await self.send_audio(item):
                 break
 
     def stop(self) -> None:

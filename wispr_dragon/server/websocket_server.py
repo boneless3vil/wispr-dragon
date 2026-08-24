@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Optional
+
+import numpy as np
 import websockets
 from websockets.server import WebSocketServerProtocol
 
@@ -14,6 +16,10 @@ if TYPE_CHECKING:
     from wispr_dragon.server.pipeline_runner import PipelineRunner
 
 logger = logging.getLogger(__name__)
+
+# Advertised in the `ready` payload so a client can tell whether this server
+# understands utterance framing, and fall back to the silence-flush hack if not.
+SERVER_FEATURES = ["utterance"]
 
 
 class WebSocketServer:
@@ -34,6 +40,21 @@ class WebSocketServer:
         self.audio_receiver: Optional[WebSocketAudioReceiver] = None
         self.process_task: Optional[asyncio.Task] = None
         self._paused = False
+
+        # --- utterance mode (connection-scoped) ---
+        # A connection stays in legacy VAD-segmentation mode until the client
+        # sends its first `utterance_start`; then it latches into utterance mode
+        # for the rest of its life. That keeps older clients working untouched.
+        self._utterance_mode = False
+        self._utterance_buf: list = []
+        self._utterance_samples = 0
+        self._utterance_id: Optional[str] = None
+        # Set by the handler coroutine on `utterance_end`; consumed by the audio
+        # loop once it has drained the last queued frames.
+        self._utterance_end_pending = False
+        self._max_utterance_samples = int(
+            config.audio.sample_rate * config.audio.max_utterance_seconds
+        )
 
     async def handler(self, websocket: WebSocketServerProtocol, path: str) -> None:
         """Handle a new WebSocket connection.
@@ -63,9 +84,15 @@ class WebSocketServer:
         self.active_connection = websocket
         self.audio_receiver = WebSocketAudioReceiver(sample_rate=16000, channels=1)
         self._paused = False
+        self._reset_utterance()
+        self._utterance_mode = False
 
         try:
-            await websocket.send(json.dumps({"type": "ready", "server_version": "1.0.0"}))
+            await websocket.send(json.dumps({
+                "type": "ready",
+                "server_version": "1.0.0",
+                "features": SERVER_FEATURES,
+            }))
             logger.info("Sent ready signal to client")
 
             self.audio_receiver.start()
@@ -97,6 +124,11 @@ class WebSocketServer:
                     await self.process_task
                 except asyncio.CancelledError:
                     pass
+            # A partial utterance has nowhere to be delivered — drop it rather
+            # than transcribing into a closed socket.
+            if self._utterance_buf:
+                logger.info("Discarding partial utterance on disconnect")
+            self._reset_utterance()
             self.active_connection = None
             self.audio_receiver = None
             self.process_task = None
@@ -122,8 +154,43 @@ class WebSocketServer:
             await websocket.send(json.dumps({"type": "pong", "ts": ts}))
         elif msg_type == "learn_correction":
             await self._handle_learn_correction(data, websocket)
+        elif msg_type == "utterance_start":
+            await self._handle_utterance_start(data, websocket)
+        elif msg_type == "utterance_end":
+            # The audio loop finalizes once it has drained the frames that
+            # preceded this frame on the wire (WebSocket preserves order).
+            self._utterance_end_pending = True
+            logger.debug("Utterance end requested: %s", data.get("id"))
         else:
             logger.warning("Unknown message type: %s", msg_type)
+
+    async def _handle_utterance_start(self, data: dict, websocket: WebSocketServerProtocol) -> None:
+        """Begin buffering a hotkey-delimited utterance.
+
+        The first such message latches this connection into utterance mode. A
+        fresh start while a buffer is in flight (rapid re-press / barge-in)
+        discards the old audio rather than emitting a stale transcript.
+        """
+        if not self._utterance_mode:
+            logger.info("Client uses utterance framing — VAD will trim, not split")
+            self._utterance_mode = True
+        if self._utterance_buf:
+            logger.debug("Discarding in-flight utterance buffer on new start")
+        self._reset_utterance()
+        self._utterance_id = data.get("id")
+        try:
+            await websocket.send(
+                json.dumps({"type": "utterance_ack", "id": self._utterance_id})
+            )
+        except Exception:
+            pass
+
+    def _reset_utterance(self) -> None:
+        """Drop any buffered utterance audio (also used on disconnect)."""
+        self._utterance_buf = []
+        self._utterance_samples = 0
+        self._utterance_id = None
+        self._utterance_end_pending = False
 
     async def _handle_learn_correction(self, data: dict, websocket: WebSocketServerProtocol) -> None:
         """Persist a learned correction so it auto-applies to future transcripts.
@@ -151,6 +218,42 @@ class WebSocketServer:
         except Exception:
             pass
 
+    async def _finalize_utterance(self, continued: bool = False) -> None:
+        """Transcribe the buffered utterance in one pass and send the result.
+
+        ``continued=True`` means the max-length valve fired mid-utterance rather
+        than the user releasing the hotkey; the id is kept so the client can tell
+        the pieces belong together, and buffering resumes for the remainder.
+        """
+        if not self._utterance_buf:
+            self._utterance_samples = 0
+            return
+
+        audio = np.concatenate(self._utterance_buf)
+        utterance_id = self._utterance_id
+        self._utterance_buf = []
+        self._utterance_samples = 0
+        if not continued:
+            self._utterance_id = None
+
+        result = await asyncio.to_thread(self.pipeline_runner.process_utterance, audio)
+        if not result or not self.active_connection:
+            return
+        try:
+            await self.active_connection.send(json.dumps({
+                "type": "transcript",
+                "text": result,
+                "final": True,
+                "language": "en",
+                "duration": audio.shape[0] / self.config.audio.sample_rate,
+                "id": utterance_id,
+                "utterance": True,
+                "continued": continued,
+            }))
+            logger.debug("Sent utterance transcript: %s", result)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Connection closed while sending utterance transcript")
+
     async def _process_audio_loop(self) -> None:
         """Process audio chunks and send transcriptions back.
 
@@ -166,6 +269,24 @@ class WebSocketServer:
                 # delay here makes the consumer slower than real-time audio and
                 # the bounded queue then drops frames during sustained speech.
                 audio_chunk = await asyncio.to_thread(self.audio_receiver.read, timeout=0.1)
+
+                if self._utterance_mode:
+                    # Accumulate; the hotkey (not the VAD) delimits the utterance.
+                    if audio_chunk is not None:
+                        if not self._paused:
+                            self._utterance_buf.append(audio_chunk)
+                            self._utterance_samples += audio_chunk.shape[0]
+                            if self._utterance_samples >= self._max_utterance_samples:
+                                logger.info("Utterance hit max length — force-finalizing")
+                                await self._finalize_utterance(continued=True)
+                        continue
+                    # read() returned None => the queue is drained, so every
+                    # frame that preceded `utterance_end` on the wire is buffered.
+                    if self._utterance_end_pending:
+                        self._utterance_end_pending = False
+                        await self._finalize_utterance()
+                    continue
+
                 if audio_chunk is None:
                     continue
 

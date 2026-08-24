@@ -39,6 +39,9 @@ class TrayApp:
         self.toggle_action: QAction | None = None
         self.settings_action: QAction | None = None
         self.quit_action: QAction | None = None
+        # Remembered so a theme change can re-tint the icon for the *current*
+        # recording state, not just reset it to idle.
+        self._active = False
 
     def start(self) -> None:
         """Build the tray icon + menu. Requires a QApplication to exist."""
@@ -82,10 +85,23 @@ class TrayApp:
 
         self.tray.setContextMenu(self.menu)
         self.tray.show()
+
+        # Re-tint the icon when the OS switches light/dark, so a black mic never
+        # sits invisibly on a dark taskbar (or white on light). Without this the
+        # icon is computed once and goes stale on a theme change. Qt 6.5+ only.
+        hints = app.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_color_scheme_changed)
+
         logger.info("System tray icon ready")
+
+    def _on_color_scheme_changed(self, *_args) -> None:
+        """OS light/dark toggled — repaint the icon for the current state."""
+        self._refresh_icon(self._active)
 
     def update_recording_state(self, active: bool) -> None:
         """Reflect a hotkey state change in the tray label, tooltip, and icon."""
+        self._active = active
         if self.state_action is not None:
             self.state_action.setText("Recording: ON  ●" if active else "Recording: OFF")
         if self.tray is not None:
@@ -103,16 +119,27 @@ class TrayApp:
     # --- internals --------------------------------------------------------
 
     def _refresh_icon(self, active: bool) -> None:
-        # Built-in Qt pixmaps as placeholders until a real Wispr Dragon icon
-        # is added — Play = recording, Pause = idle.
+        """Show the mic artwork for the current state (red = recording).
+
+        Falls back to Qt's built-in play/pause pixmaps if the bundled icons
+        can't be loaded, so the tray never ends up icon-less.
+        """
         app = QApplication.instance()
         if app is None or self.tray is None:
             return
-        which = (
-            QStyle.StandardPixmap.SP_MediaPlay if active
-            else QStyle.StandardPixmap.SP_MediaPause
-        )
-        self.tray.setIcon(app.style().standardIcon(which))
+
+        # Package-root module: importing wispr_dragon.ui here would pull the
+        # desktop UI stack (and rapidfuzz) into the lean client venv.
+        from wispr_dragon.icons import mic_off_icon, mic_on_icon
+
+        icon = mic_on_icon() if active else mic_off_icon()
+        if icon is None:
+            which = (
+                QStyle.StandardPixmap.SP_MediaPlay if active
+                else QStyle.StandardPixmap.SP_MediaPause
+            )
+            icon = app.style().standardIcon(which)
+        self.tray.setIcon(icon)
 
     def _on_toggle_mode(self, checked: bool) -> None:
         mode = HotkeyMode.TOGGLE if checked else HotkeyMode.PTT

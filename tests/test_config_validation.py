@@ -69,6 +69,17 @@ class TestAudioConfig:
         with pytest.raises(ValueError):
             AudioConfig(min_speech_duration_ms=-100)
 
+    def test_audio_config_max_utterance_seconds_under_whisper_window(self):
+        """Default must stay under Whisper's 30s window (see AudioConfig)."""
+        assert 0 < AudioConfig().max_utterance_seconds < 30
+
+    def test_audio_config_max_utterance_seconds_must_be_positive(self):
+        """Zero or negative would make the safety valve fire immediately."""
+        with pytest.raises(ValueError):
+            AudioConfig(max_utterance_seconds=0)
+        with pytest.raises(ValueError):
+            AudioConfig(max_utterance_seconds=-5)
+
     def test_audio_config_network_port_zero(self):
         """Test that network_port=0 raises ValueError."""
         with pytest.raises(ValueError):

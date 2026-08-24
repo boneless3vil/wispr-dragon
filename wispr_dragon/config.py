@@ -28,8 +28,18 @@ class AudioConfig:
     channels: int = 1
     dtype: str = "int16"
     vad_threshold: float = 0.5
-    silence_duration_ms: int = 500
+    # How much trailing silence closes a speech segment. Each segment is
+    # transcribed independently, so a short value shreds one sentence into
+    # fragments ("a result." / "is due to.") and robs Whisper of the context it
+    # needs — accuracy drops sharply below ~5 s of audio. 900 ms rides over the
+    # natural pauses inside a sentence while still ending an utterance promptly.
+    silence_duration_ms: int = 900
     min_speech_duration_ms: int = 250
+    # Safety valve for utterance mode: force-finalize a held hotkey after this
+    # long. Kept under Whisper's 30 s window so a single transcribe call never
+    # hits faster-whisper's internal long-audio chunking (where accuracy drops),
+    # and so a stuck hotkey can't grow the server buffer without bound.
+    max_utterance_seconds: int = 25
     source: str = "pulseaudio"  # "pulseaudio" or "network"
     network_host: str = "0.0.0.0"
     network_port: int = 9876
@@ -45,6 +55,10 @@ class AudioConfig:
             raise ValueError(f"silence_duration_ms must be >= 0, got {self.silence_duration_ms}")
         if self.min_speech_duration_ms < 0:
             raise ValueError(f"min_speech_duration_ms must be >= 0, got {self.min_speech_duration_ms}")
+        if self.max_utterance_seconds <= 0:
+            raise ValueError(
+                f"max_utterance_seconds must be > 0, got {self.max_utterance_seconds}"
+            )
         if self.network_port <= 0 or self.network_port > 65535:
             raise ValueError(f"network_port must be in [1,65535], got {self.network_port}")
 
@@ -173,6 +187,7 @@ class Config:
                 "vad_threshold": self.audio.vad_threshold,
                 "silence_duration_ms": self.audio.silence_duration_ms,
                 "min_speech_duration_ms": self.audio.min_speech_duration_ms,
+                "max_utterance_seconds": self.audio.max_utterance_seconds,
                 "source": self.audio.source,
                 "network_host": self.audio.network_host,
                 "network_port": self.audio.network_port,

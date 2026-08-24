@@ -33,6 +33,13 @@ FORMATTING_RULES = {
     "close quote": '"',
     "open paren": "(",
     "close paren": ")",
+    "open parenthesis": "(",
+    "close parenthesis": ")",
+    # Whisper usually transcribes the spoken command as the plural.
+    "open parentheses": "(",
+    "close parentheses": ")",
+    "left paren": "(",
+    "right paren": ")",
     "hyphen": "-",
     "dash": " -- ",
     "ellipsis": "...",
@@ -41,13 +48,14 @@ FORMATTING_RULES = {
     "tab": "\t",
 }
 
-CAPITALIZATION_COMMANDS = {
-    "cap": "capitalize_next",
-    "caps on": "capitalize_on",
-    "caps off": "capitalize_off",
-    "all caps": "uppercase_next",
-    "no caps": "lowercase_next",
-}
+# Spoken capitalization commands handled by _apply_caps_commands:
+#   "cap <word>"       -> Capitalize next word
+#   "all caps <word>"  -> UPPERCASE next word
+#   "no caps <word>"   -> lowercase next word
+#   "caps on ... caps off"         -> Title Case the span
+#   "all caps on ... all caps off" -> UPPERCASE the span
+#   "no caps on ... no caps off"   -> lowercase the span
+# Span commands run to end of utterance if the closing command never arrives.
 
 
 class PostProcessor:
@@ -74,6 +82,10 @@ class PostProcessor:
         if apply_formatting:
             text = self._apply_formatting(text)
         text = self._apply_capitalization_rules(text)
+        if apply_formatting:
+            # Last so an explicit spoken command beats the sentence-start
+            # capitalizer and dictionary re-casing.
+            text = self._apply_caps_commands(text)
         return text.strip()
 
     def _apply_exact_corrections(self, text: str) -> str:
@@ -132,9 +144,74 @@ class PostProcessor:
             text = pattern.sub(replacement, text)
         # Clean up spaces before punctuation
         text = re.sub(r"\s+([.,!?;:])", r"\1", text)
+        # Snug parens/quotes against their content: "( Control )" -> "(Control)"
+        text = re.sub(r"\(\s+", "(", text)
+        text = re.sub(r"\s+\)", ")", text)
+        # Collapse runs of adjacent punctuation to a single strongest mark. When
+        # you *say* "comma"/"period", the engine also auto-punctuates from your
+        # natural pauses, so the spoken mark collides with the model's own —
+        # producing ",," or ".," ("Hello,, world.,, ..."). Keep ellipsis intact.
+        text = self._collapse_adjacent_punctuation(text)
         # Capitalize first word after sentence-ending punctuation
         text = re.sub(r"([.!?]\s+)(\w)", lambda m: m.group(1) + m.group(2).upper(), text)
         return text
+
+    # Command word, optional engine-inserted punctuation, then the target word.
+    # The engine auto-punctuates from pauses, so "no caps 26" often arrives as
+    # "No caps, 26" — stray marks between command and target must be consumed.
+    _CAPS_TARGET = r"[,.!?;:]*\s+([\w'-]+)"
+
+    def _apply_caps_commands(self, text: str) -> str:
+        """Consume spoken capitalization commands and re-case their target.
+
+        "cap police" -> "Police", "all caps tomorrow" -> "TOMORROW",
+        "no caps Tomorrow" -> "tomorrow". Spans: "caps on ... caps off"
+        Title Cases, "all caps on ... all caps off" UPPERCASES, and
+        "no caps on ... no caps off" lowercases everything between.
+        """
+        flags = re.IGNORECASE
+
+        def span(on: str, off: str, recase) -> str:
+            return re.sub(
+                on + r"\b[,.!?;:]?\s*(.*?)(?:[,.!?;:]?\s*\b" + off + r"\b|$)",
+                lambda m: recase(m.group(1)), text, flags=flags | re.DOTALL)
+
+        def title(s: str) -> str:
+            return re.sub(r"[A-Za-z][\w']*",
+                          lambda w: w.group(0)[0].upper() + w.group(0)[1:].lower(), s)
+
+        # Span commands first: the next-word rules below would otherwise eat
+        # "no caps on" as "no caps" + target "on". Bare "caps on" needs the
+        # lookbehinds so it doesn't match the tail of the longer commands.
+        text = span(r"\ball caps on", r"all caps off", str.upper)
+        text = span(r"\bno caps on", r"no caps off", str.lower)
+        text = span(r"(?<!\bno )(?<!\ball )\bcaps on", r"caps off", title)
+        text = re.sub(r"\ball caps" + self._CAPS_TARGET,
+                      lambda m: m.group(1).upper(), text, flags=flags)
+        text = re.sub(r"\bno caps" + self._CAPS_TARGET,
+                      lambda m: m.group(1).lower(), text, flags=flags)
+        text = re.sub(r"\bcap" + self._CAPS_TARGET,
+                      lambda m: m.group(1).capitalize(), text, flags=flags)
+        return text
+
+    # Higher wins when several marks land next to each other.
+    _PUNCT_PRIORITY = {"?": 5, "!": 4, ".": 3, ";": 2, ":": 2, ",": 1}
+
+    def _collapse_adjacent_punctuation(self, text: str) -> str:
+        """Reduce a run of ``,.;:!?`` (optionally space-separated) to one mark.
+
+        Parentheses and quotes are left alone. Ellipsis (``...``) is protected so
+        it isn't crushed to a single dot.
+        """
+        sentinel = "\x00ELLIPSIS\x00"
+        text = text.replace("...", sentinel)
+
+        def strongest(match: re.Match) -> str:
+            marks = [c for c in match.group(0) if c in self._PUNCT_PRIORITY]
+            return max(marks, key=self._PUNCT_PRIORITY.__getitem__)
+
+        text = re.sub(r"[,.;:!?](?:\s*[,.;:!?])+", strongest, text)
+        return text.replace(sentinel, "...")
 
     def _apply_capitalization_rules(self, text: str) -> str:
         """Auto-capitalize proper nouns from the dictionary.

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,31 @@ _FLUSH_FRAMES = 33  # ~1 second — well past the VAD's silence threshold
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path.home() / "AppData" / "Local" / "WisprDragon" / "config.json"
+
+# Loopback port used purely as a single-instance lock. A second client is
+# actively harmful: the server accepts one connection, so the loser sits in a
+# reconnect storm, and *both* instances hold a global hotkey listener and the
+# microphone. Binding a port (rather than writing a lock file) means the OS
+# reclaims the lock when the process dies — no stale state to clean up.
+_SINGLE_INSTANCE_PORT = 47653
+
+
+def acquire_single_instance(port: int = _SINGLE_INSTANCE_PORT):
+    """Return a bound socket acting as the instance lock, or None if one exists.
+
+    The caller must keep the returned socket alive for the process lifetime.
+    SO_REUSEADDR is deliberately NOT set — we want the second bind to fail.
+    """
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+        sock.listen(1)
+        return sock
+    except OSError:
+        sock.close()
+        return None
 
 
 def needs_setup(config: dict) -> bool:
@@ -82,7 +108,11 @@ class WisprDragonClient:
         self.audio_queue = None
         self._running = False
         self.inject_enabled = inject
-        self.injector = WindowsTextInjector()
+        # Injection method from config: "paste" (clipboard + Ctrl+V, default,
+        # robust against keystroke-mangling hooks) or "sendinput" (per-char).
+        self.injector = WindowsTextInjector(
+            method=self.config.get("inject_method", "paste")
+        )
         self._mode_override = mode
         self.no_tray = no_tray
         self.hotkey: Optional[Hotkey] = None
@@ -98,6 +128,8 @@ class WisprDragonClient:
         self._last_injection_text: Optional[str] = None
         self._last_injection_len = 0
         self._correction_dialog = None  # held during exec()
+        # Correlates utterance_start/end with the transcript the server returns.
+        self._utterance_id: Optional[str] = None
 
     def _load_config(self) -> dict:
         """Load client configuration.
@@ -119,6 +151,7 @@ class WisprDragonClient:
             "device": None,
             "mode": "ptt",
             "hotkey": "ctrl_r",
+            "inject_method": "paste",
         }
 
     def _save_config(self) -> None:
@@ -139,8 +172,9 @@ class WisprDragonClient:
                 "transcripts will only be printed"
             )
         logger.info(
-            "Text injection: %s",
+            "Text injection: %s (method=%s)",
             "on" if (self.inject_enabled and self.injector.available) else "off",
+            self.injector.method,
         )
 
         # First-run setup: if the client has no usable config, prompt for the
@@ -346,20 +380,46 @@ class WisprDragonClient:
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._apply_active, active)
 
+    def _utterance_framing(self) -> bool:
+        """True when the server can transcribe a whole hotkey-delimited utterance."""
+        return self.ws_client is not None and self.ws_client.supports("utterance")
+
+    def _enqueue_control(self, message: dict) -> None:
+        """Queue a control frame behind any pending audio (order matters)."""
+        if self.audio_queue is None:
+            return
+        try:
+            self.audio_queue.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.warning("Audio queue full — dropped control frame %s", message.get("type"))
+
     def _apply_active(self, active: bool) -> None:
-        """Mic gate change — runs on the asyncio event loop thread."""
+        """Mic gate change — runs on the asyncio event loop thread.
+
+        The hotkey is the utterance boundary. Against a server that understands
+        utterance framing we say so explicitly, and the whole utterance is
+        transcribed in one pass. Against an older server we fall back to the
+        silence-flush hack, which nudges its VAD into closing the last segment.
+        """
         if active:
+            if self._utterance_framing():
+                self._utterance_id = uuid.uuid4().hex
+                self._enqueue_control({"type": "utterance_start", "id": self._utterance_id})
             self.audio_capture.set_paused(False)
             logger.info("🎤 Recording ON — speak now")
         else:
-            # Inject a brief tail of silence so the server's VAD flushes the
-            # last segment instead of leaving it buffered.
-            for _ in range(_FLUSH_FRAMES):
-                try:
-                    self.audio_queue.put_nowait(_SILENCE_FRAME)
-                except asyncio.QueueFull:
-                    break
             self.audio_capture.set_paused(True)
+            if self._utterance_framing():
+                self._enqueue_control({"type": "utterance_end", "id": self._utterance_id})
+                self._utterance_id = None
+            else:
+                # Legacy server: inject a tail of silence so its VAD flushes the
+                # last segment instead of leaving it buffered.
+                for _ in range(_FLUSH_FRAMES):
+                    try:
+                        self.audio_queue.put_nowait(_SILENCE_FRAME)
+                    except asyncio.QueueFull:
+                        break
             logger.info("Recording OFF")
         if self.tray is not None:
             self.tray.update_recording_state(active)
@@ -482,6 +542,18 @@ def main():
         WindowsAudioCapture.list_devices()
         return 0
 
+    # Refuse to start a second client. Two instances fight over the single
+    # server connection, the global hotkey, and the microphone. Held for the
+    # process lifetime (released by the OS on exit).
+    instance_lock = acquire_single_instance()
+    if instance_lock is None:
+        logger.error(
+            "Another Wispr Dragon client is already running. The server accepts "
+            "only one connection, and a second client would also grab the hotkey "
+            "and microphone. Quit the other instance first."
+        )
+        return 3
+
     client = WisprDragonClient(
         config_path=(Path(args.config) if args.config else None),
         inject=not args.no_inject,
@@ -527,6 +599,10 @@ def _run_with_tray(client) -> int:
     qt_app = QApplication.instance() or QApplication(sys.argv)
     # Closing the (invisible) tray "window" should not exit the program.
     qt_app.setQuitOnLastWindowClosed(False)
+    # If Qt quits by any route (tray Quit, session logout, window close), ask the
+    # client to wind down so run() can finish rather than being torn out from
+    # under qasync.
+    qt_app.aboutToQuit.connect(client.stop)
     loop = qasync.QEventLoop(qt_app)
     asyncio.set_event_loop(loop)
     with loop:
@@ -534,6 +610,14 @@ def _run_with_tray(client) -> int:
             loop.run_until_complete(client.run())
         except KeyboardInterrupt:
             pass
+        except RuntimeError as e:
+            # qasync raises "Event loop stopped before Future completed" when the
+            # Qt loop stops while run() is still unwinding. Shutdown has already
+            # happened at that point, so this is noise, not a failure — surfacing
+            # it as an unhandled exception showed users a crash dialog on Quit.
+            if "Event loop stopped before Future completed" not in str(e):
+                raise
+            logger.debug("Qt loop stopped during shutdown: %s", e)
     return 0
 
 

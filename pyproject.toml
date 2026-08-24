@@ -7,7 +7,7 @@ name = "wispr_dragon"
 version = "1.0.0"
 description = "Local speech recognition with Dragon NaturallySpeaking-like features"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [{name = "Jonathan Baldwin", email = "bonelessevil@gmail.com"}]
 requires-python = ">=3.11"
 dependencies = [
@@ -19,11 +19,33 @@ dependencies = [
     "bcrypt>=4.0",
 ]
 
+# torch backs Silero VAD (server + local UI) and the openai-whisper engine.
+# The PyPI wheel selects the compute backend by platform: Linux x86_64 defaults
+# to the CUDA build, macOS to CPU/MPS. To force a specific backend, install with
+# an index override, e.g.:
+#   CPU:  pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   ROCm: pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
+# AMD: CTranslate2 gained an official ROCm/HIP backend in v4.7.0 (2026-02), and
+# upstream ships ROCm wheels. faster-whisper therefore *can* drive an AMD GPU —
+# install a ROCm-built ctranslate2 and keep passing device="cuda" (it's a
+# hipified port of the CUDA backend, not a separate device type). The cu12
+# cuBLAS/cuDNN preload below is NVIDIA-only and is skipped on such a build.
+#
+# CUDA note: CTranslate2 4.x is built against CUDA 12 and dlopens libcublas.so.12
+# / libcudnn.so.9 at inference (the engine preloads them — see
+# engine/_cuda_libs.py). To keep a single CUDA runtime, NVIDIA users should
+# install the CUDA-12 torch wheel, which also provides those libs:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+# The default PyPI torch is the CUDA-13 wheel; pairing it with faster-whisper
+# means two CUDA runtimes coexist — works, but then also install the `cuda`
+# extra below for the CUDA-12 cuBLAS/cuDNN. CPU-only users skip all of this.
 [project.optional-dependencies]
-gui = ["PyQt6>=6.7"]
+gui = ["PyQt6>=6.7", "torch>=2.0", "torchaudio>=2.0"]
 whisper-fallback = ["openai-whisper>=20240930"]
 openai-api = ["openai>=1.0", "pydub>=0.25"]
-server = ["websockets>=12.0,<13"]
+server = ["websockets>=12.0,<13", "torch>=2.0", "torchaudio>=2.0"]
+# CUDA-12 runtime libs for faster-whisper/CTranslate2 on NVIDIA GPUs.
+cuda = ["nvidia-cublas-cu12>=12.0", "nvidia-cudnn-cu12>=9.0,<10"]
 client = [
     "websockets>=12.0,<13",
     "pystray>=0.19",
@@ -45,6 +67,12 @@ wispr_dragon = "wispr_dragon.main:main"
 
 [tool.setuptools.packages.find]
 include = ["wispr_dragon*"]
+
+[tool.setuptools.package-data]
+# Bundle the mic on/off tray + window icons into the wheel. They live at the
+# package root (not under ui/) so the headless client can use them without
+# importing the desktop UI stack.
+"wispr_dragon" = ["assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
