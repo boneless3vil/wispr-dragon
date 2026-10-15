@@ -69,3 +69,46 @@ def test_persistence(tmp_path):
 def test_phrase_replacement(tmp_dict):
     tmp_dict.add_phrase_replacement("per say", "per se")
     assert tmp_dict.phrase_replacements["per say"] == "per se"
+
+
+def test_add_correction_count_bumps_frequency_once(tmp_dict):
+    tmp_dict.add_correction("teh", "the", count=3)
+    assert tmp_dict.corrections["teh"]["frequency"] == 3
+
+
+def test_corrupt_dictionary_is_backed_up_not_fatal(tmp_path):
+    path = tmp_path / "d.json"
+    path.write_text("{ not json")
+    d = UserDictionary(path=path)
+    assert d.corrections == {}
+    assert list(tmp_path.glob("d.json.corrupt*")), "bad file should be kept aside"
+
+
+def test_save_is_atomic_and_round_trips(tmp_path):
+    path = tmp_path / "d.json"
+    d = UserDictionary(path=path)
+    d.add_correction("teh", "the")
+    assert UserDictionary(path=path).get_correction("teh") == "the"
+    assert not list(tmp_path.glob("*.tmp")), "temp file must be renamed into place"
+
+
+def test_initial_prompt_prefers_newest_words(tmp_path):
+    d = UserDictionary(path=tmp_path / "d.json")
+    for i in range(60):
+        d.add_custom_word(f"Word{i}")
+    prompt = d.build_initial_prompt()
+    assert "Word59" in prompt
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() == 0,
+                    reason="needs a non-root POSIX user for permission errors")
+def test_unreadable_dictionary_is_an_error_not_corruption(tmp_path):
+    path = tmp_path / "d.json"
+    UserDictionary(path=path).add_correction("teh", "the")
+    path.chmod(0)
+    try:
+        with pytest.raises(PermissionError):
+            UserDictionary(path=path)
+        assert not list(tmp_path.glob("d.json.corrupt*"))
+    finally:
+        path.chmod(0o600)

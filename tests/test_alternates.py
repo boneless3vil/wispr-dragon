@@ -83,3 +83,9 @@ def test_add_correction_survives_entry_without_alternatives(dictionary):
     dictionary.add_correction("foo", "baz")
     assert dictionary.get_correction("foo") == "baz"
     assert "foo" in dictionary.corrections["foo"]["alternatives"]
+
+
+def test_original_survives_a_full_list():
+    # "to" has more homophones than fit; the original must keep the last slot.
+    out = synthesize_alternates("to", None, limit=2)
+    assert len(out) == 2 and out[-1] == "to"

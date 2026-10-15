@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -32,8 +33,23 @@ class UserDictionary:
             self._save()
             return
 
-        with open(self.path) as f:
-            data = json.load(f)
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("top level is not an object")
+        except ValueError as e:
+            # A half-written or hand-mangled file must not stop the server from
+            # starting. Keep it aside for recovery and start empty. (OSError —
+            # e.g. a root-owned file — still propagates: that's not corruption,
+            # and silently starting empty would hide it.)
+            backup = self.path.with_name(
+                f"{self.path.name}.corrupt-{datetime.now():%Y%m%d-%H%M%S}"
+            )
+            logger.error("Unreadable dictionary %s (%s) — moved to %s", self.path, e, backup)
+            os.replace(self.path, backup)
+            self._save()
+            return
 
         self.corrections = data.get("corrections", {})
         self.custom_words = data.get("custom_words", [])
@@ -49,12 +65,25 @@ class UserDictionary:
             "custom_words": self.custom_words,
             "phrase_replacements": self.phrase_replacements,
         }
-        with open(self.path, "w") as f:
-            json.dump(data, f, indent=2)
-        self.path.chmod(0o600)
+        # Write-then-rename so a crash mid-write never leaves truncated JSON.
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp.chmod(0o600)
+            os.replace(tmp, self.path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
-    def add_correction(self, wrong: str, correct: str) -> None:
-        """Record a correction from wrong text to correct text."""
+    def add_correction(self, wrong: str, correct: str, count: int = 1) -> None:
+        """Record a correction from wrong text to correct text.
+
+        ``count`` adds that many observations at once — "always apply" passes
+        the auto-apply threshold so the fix applies immediately, with one write.
+        """
         wrong_lower = wrong.lower().strip()
         correct = correct.strip()
 
@@ -64,7 +93,7 @@ class UserDictionary:
         if wrong_lower in self.corrections:
             entry = self.corrections[wrong_lower]
             entry["correct"] = correct
-            entry["frequency"] = entry.get("frequency", 0) + 1
+            entry["frequency"] = entry.get("frequency", 0) + count
             entry["last_used"] = datetime.now().isoformat()
             # setdefault guards entries written without an "alternatives" key
             # (e.g. hand-edited or from an older format) — otherwise this KeyErrors.
@@ -75,7 +104,7 @@ class UserDictionary:
             self.corrections[wrong_lower] = {
                 "correct": correct,
                 "alternatives": [wrong_lower],
-                "frequency": 1,
+                "frequency": count,
                 "last_used": datetime.now().isoformat(),
             }
 
@@ -100,9 +129,12 @@ class UserDictionary:
 
     def get_high_confidence_corrections(self, threshold: int = 3) -> dict[str, str]:
         """Get corrections that have been made enough times to auto-apply."""
+        # Snapshot first: the desktop app edits the dictionary on the GUI thread
+        # while a worker thread post-processes, and iterating a dict that
+        # changes size mid-loop raises.
         return {
             wrong: entry["correct"]
-            for wrong, entry in self.corrections.items()
+            for wrong, entry in list(self.corrections.items())
             if entry.get("frequency", 0) >= threshold
         }
 
@@ -149,7 +181,9 @@ class UserDictionary:
 
         Whisper uses this as context to bias toward these words.
         """
-        words = self.custom_words[:50]
+        # Newest 50 — words are appended as they're learned, so the head of the
+        # list is the oldest and a fresh word would never reach the prompt.
+        words = self.custom_words[-50:]
         if not words:
             return ""
         return "The following names and terms may appear: " + ", ".join(words) + "."

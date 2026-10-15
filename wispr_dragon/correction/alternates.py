@@ -122,7 +122,10 @@ def synthesize_alternates(
         except ImportError:
             pass
 
-    # Original always offered (as a no-op choice), last.
+    # Original always offered (as a no-op choice), last — and when the list is
+    # already full it takes the final slot rather than being truncated away.
     _add(text)
-
+    original = (text or "").strip()
+    if original and limit > 0 and original not in out[:limit]:
+        out = out[: limit - 1] + [original]
     return out[:limit]
