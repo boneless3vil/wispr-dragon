@@ -33,6 +33,8 @@ class VoiceActivityDetector:
 
         self._model = None
         self._speech_buffer: list[np.ndarray] = []
+        self._buffered = 0  # samples in _speech_buffer
+        self._residual = np.zeros(0, dtype=np.float32)  # <512-sample tail
         self._silence_counter = 0
         self._is_speaking = False
 
@@ -68,51 +70,58 @@ class VoiceActivityDetector:
         if audio.ndim > 1:
             audio = audio.flatten()
 
-        # Silero VAD expects 512-sample chunks at 16kHz
-        tensor = torch.from_numpy(audio).float()
-        # Process in 512-sample windows
+        # Silero VAD scores exactly 512-sample windows at 16 kHz. Capture frames
+        # rarely divide evenly (30 ms = 480 samples), so carry the remainder
+        # into the next call instead of zero-padding: padding fed silence into
+        # the speech buffer (and to Whisper) and broke up the RNN's input.
         chunk_size = 512
-        for i in range(0, len(tensor), chunk_size):
-            window = tensor[i:i + chunk_size]
-            if len(window) < chunk_size:
-                window = torch.nn.functional.pad(window, (0, chunk_size - len(window)))
+        audio = np.concatenate([self._residual, audio.astype(np.float32, copy=False)])
+        usable = len(audio) // chunk_size * chunk_size
+        self._residual = audio[usable:].copy()
 
-            confidence = self._model(window, self.sample_rate).item()
+        for i in range(0, usable, chunk_size):
+            window = audio[i:i + chunk_size]
+            confidence = self._model(torch.from_numpy(window), self.sample_rate).item()
 
             if confidence >= self.threshold:
                 self._is_speaking = True
                 self._silence_counter = 0
-                self._speech_buffer.append(window.numpy())
+                self._speech_buffer.append(window)
+                self._buffered += len(window)
             elif self._is_speaking:
                 self._silence_counter += len(window)
-                self._speech_buffer.append(window.numpy())
+                self._speech_buffer.append(window)
+                self._buffered += len(window)
 
                 if self._silence_counter >= self.silence_samples:
                     # Speech segment complete. Silero is a streaming RNN — its
                     # hidden state must be cleared between segments or the next
                     # one's confidence scores skew based on the previous segment.
-                    segment = np.concatenate(self._speech_buffer)
-                    self._speech_buffer.clear()
-                    self._is_speaking = False
-                    self._silence_counter = 0
-                    self._model.reset_states()
-
+                    segment = self._flush()
                     if len(segment) >= self.min_speech_samples:
+                        # Windows after this one are scored on the next call.
+                        self._residual = audio[i + chunk_size:].copy()
                         return segment
 
             # Guard against infinite buffer growth
-            buffer_size = sum(len(chunk) for chunk in self._speech_buffer)
-            if buffer_size > self.max_buffer_samples and self._is_speaking:
+            if self._buffered > self.max_buffer_samples and self._is_speaking:
                 logger.warning("VAD buffer exceeded max size, flushing")
-                segment = np.concatenate(self._speech_buffer)
-                self._speech_buffer.clear()
-                self._is_speaking = False
-                self._silence_counter = 0
-                self._model.reset_states()
+                segment = self._flush()
                 if len(segment) >= self.min_speech_samples:
+                    self._residual = audio[i + chunk_size:].copy()
                     return segment
 
         return None
+
+    def _flush(self) -> np.ndarray:
+        """Hand back the buffered segment and clear speech state."""
+        segment = np.concatenate(self._speech_buffer)
+        self._speech_buffer.clear()
+        self._buffered = 0
+        self._is_speaking = False
+        self._silence_counter = 0
+        self._model.reset_states()
+        return segment
 
     def trim(self, audio: np.ndarray) -> Optional[np.ndarray]:
         """Trim leading/trailing silence from one complete utterance.
@@ -163,6 +172,8 @@ class VoiceActivityDetector:
     def reset(self) -> None:
         """Reset the VAD state."""
         self._speech_buffer.clear()
+        self._buffered = 0
+        self._residual = np.zeros(0, dtype=np.float32)
         self._silence_counter = 0
         self._is_speaking = False
         if self._model is not None:

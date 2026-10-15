@@ -198,3 +198,40 @@ def test_process_utterance_returns_empty_without_engine():
     runner = _runner()
     runner.engine = None
     assert runner.process_utterance(np.ones(100, dtype=np.float32)) == ""
+
+
+# --- process_chunk framing ----------------------------------------------------
+
+class _ScriptedVadModel:
+    """Silero double: every window is 'speech'; records window sizes."""
+
+    def __init__(self):
+        self.windows = []
+
+    def __call__(self, window, sample_rate):
+        self.windows.append(len(window))
+
+        class _C:
+            @staticmethod
+            def item():
+                return 0.9
+        return _C()
+
+    def reset_states(self):
+        pass
+
+
+@pytest.mark.parametrize("frame", [480, 1600])
+def test_process_chunk_never_pads_odd_frames(frame):
+    pytest.importorskip("torch")
+    vad = VoiceActivityDetector(sample_rate=16000, max_buffer_seconds=60)
+    vad._model = _ScriptedVadModel()
+    fed = 0
+    for _ in range(50):
+        vad.process_chunk(np.ones(frame, dtype=np.float32))
+        fed += frame
+    buffered = sum(len(c) for c in vad._speech_buffer)
+    # Only whole 512-sample windows are scored; the remainder carries over.
+    assert set(vad._model.windows) == {512}
+    assert buffered == fed - fed % 512
+    assert all(np.all(c == 1.0) for c in vad._speech_buffer), "no zero padding"

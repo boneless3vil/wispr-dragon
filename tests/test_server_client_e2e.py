@@ -51,6 +51,8 @@ class _ServerCfg:
         self.host = host
         self.port = port
         self.api_key = api_key
+        self.tls_cert = ""
+        self.tls_key = ""
 
 
 class _AudioCfg:
@@ -59,12 +61,22 @@ class _AudioCfg:
         self.max_utterance_seconds = max_utterance_seconds
 
 
+class _EngineCfg:
+    language = "en"
+
+
+class _CorrectionCfg:
+    auto_apply_threshold = 3
+
+
 class FakeConfig:
-    """Minimal stand-in for Config — WebSocketServer touches ``.server``/``.audio``."""
+    """Minimal stand-in for Config — the sections WebSocketServer reads."""
 
     def __init__(self, port, api_key="", max_utterance_seconds=25):
         self.server = _ServerCfg("127.0.0.1", port, api_key)
         self.audio = _AudioCfg(max_utterance_seconds)
+        self.engine = _EngineCfg()
+        self.correction = _CorrectionCfg()
 
 
 # --- helpers ---------------------------------------------------------------
@@ -417,3 +429,141 @@ def test_reconnect_after_server_restart():
         assert reconnected, "client did not reconnect after the server restarted"
 
     asyncio.run(scenario())
+
+
+# --- ordering: markers take effect where they sat on the wire ----------------
+
+class _SlowPipeline(FakePipeline):
+    """Transcription takes a while, so later utterances queue up behind it."""
+
+    def process_utterance(self, audio, trim=True):
+        import time
+        time.sleep(0.3)
+        return super().process_utterance(audio, trim)
+
+
+def test_rapid_utterances_stay_separate_and_ordered():
+    import json
+
+    import websockets
+
+    async def scenario():
+        port = _free_port()
+        pipeline = _SlowPipeline()
+        _, task = await _start_server(FakeConfig(port), pipeline)
+        transcripts = []
+        try:
+            async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+                assert json.loads(await ws.recv())["type"] == "ready"
+                # A is transcribing while B and C are spoken and released.
+                for uid, frames in (("A", 10), ("B", 5), ("C", 7)):
+                    await ws.send(json.dumps({"type": "utterance_start", "id": uid}))
+                    for _ in range(frames):
+                        await ws.send(FRAME)
+                    await ws.send(json.dumps({"type": "utterance_end", "id": uid}))
+                while len(transcripts) < 3:
+                    msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                    if msg["type"] == "transcript":
+                        transcripts.append(msg["id"])
+        finally:
+            await _stop_server(task)
+        return transcripts, pipeline.utterance_samples
+
+    ids, samples = asyncio.run(scenario())
+    assert ids == ["A", "B", "C"]
+    assert samples == [4800, 2400, 3360]
+
+
+def test_malformed_control_messages_do_not_drop_the_connection():
+    import json
+
+    import websockets
+
+    async def scenario():
+        port = _free_port()
+        pipeline = FakePipeline()
+        _, task = await _start_server(FakeConfig(port), pipeline)
+        try:
+            async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+                await ws.recv()  # ready
+                await ws.send("[]")
+                await ws.send("5")
+                await ws.send(json.dumps({"type": "learn_correction", "wrong": 5, "correct": []}))
+                await ws.send(b"\x00")  # odd-length audio frame
+                await ws.send(json.dumps({"type": "utterance_start", "id": "X"}))
+                await ws.send(FRAME)
+                await ws.send(json.dumps({"type": "utterance_end", "id": "X"}))
+                while True:
+                    msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                    if msg["type"] == "transcript":
+                        return msg["id"]
+        finally:
+            await _stop_server(task)
+
+    assert asyncio.run(scenario()) == "X"
+
+
+def test_always_correction_is_stored_at_the_auto_apply_threshold():
+    import json
+
+    import websockets
+
+    from wispr_dragon.correction.dictionary import UserDictionary
+
+    class _DictPipeline(FakePipeline):
+        def __init__(self, path):
+            super().__init__()
+            self.dictionary = UserDictionary(path=path)
+
+    async def scenario(tmp):
+        port = _free_port()
+        pipeline = _DictPipeline(tmp / "d.json")
+        _, task = await _start_server(FakeConfig(port), pipeline)
+        try:
+            async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+                await ws.recv()  # ready
+                await ws.send(json.dumps({"type": "learn_correction", "wrong": "teh",
+                                          "correct": "the", "always": True}))
+                while json.loads(await asyncio.wait_for(ws.recv(), 5))["type"] \
+                        != "correction_learned":
+                    pass
+        finally:
+            await _stop_server(task)
+        return pipeline.dictionary.corrections["teh"]["frequency"]
+
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        assert asyncio.run(scenario(Path(d))) == FakeConfig(0).correction.auto_apply_threshold
+
+
+def test_junk_auth_header_is_rejected_not_crashed():
+    import websockets
+
+    async def scenario():
+        port = _free_port()
+        _, task = await _start_server(FakeConfig(port, api_key="secret"), FakePipeline())
+        try:
+            async with websockets.connect(
+                f"ws://127.0.0.1:{port}",
+                extra_headers={"Authorization": "Bearer ÿ"},
+            ) as ws:
+                try:
+                    await asyncio.wait_for(ws.recv(), 5)
+                except websockets.exceptions.ConnectionClosed as e:
+                    return e.code
+        finally:
+            await _stop_server(task)
+
+    assert asyncio.run(scenario()) == 4001
+
+
+def test_tls_requires_both_cert_and_key():
+    import pytest
+
+    from wispr_dragon.server.websocket_server import WebSocketServer
+
+    cfg = FakeConfig(0)
+    cfg.server.tls_cert = "cert.pem"
+    with pytest.raises(ValueError):
+        WebSocketServer(cfg, FakePipeline())._ssl_context()

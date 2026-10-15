@@ -8,14 +8,17 @@ from wispr_dragon.correction.dictionary import UserDictionary
 from wispr_dragon.correction.hotwords import HotwordManager
 from wispr_dragon.correction.post_processor import PostProcessor
 from wispr_dragon.engine import create_engine
-from wispr_dragon.macros.macro_runner import MacroRunner
-from wispr_dragon.modes.mode_manager import ModeManager, Mode
 
 logger = logging.getLogger(__name__)
 
 
 class PipelineRunner:
-    """Encapsulates the speech processing pipeline for reusable execution."""
+    """Encapsulates the speech processing pipeline for reusable execution.
+
+    The server is a recognizer only: transcribe, then apply vocabulary and
+    spoken formatting. Modes, commands and macros are not run here — the
+    server only ever sends text back to the client.
+    """
 
     def __init__(self, config: Config):
         """Initialize pipeline with components.
@@ -28,8 +31,6 @@ class PipelineRunner:
         self.vad = None
         self.dictionary = None
         self.post_processor = None
-        self.macro_runner = None
-        self.mode_mgr = None
         self.hotword_mgr = None
 
     def load(self, vad_enabled: bool = True) -> bool:
@@ -45,7 +46,7 @@ class PipelineRunner:
             logger.info("Loading pipeline components...")
 
             # Initialize dictionary and hotwords
-            self.dictionary = UserDictionary()
+            self.dictionary = UserDictionary(self.config.user_dir / "user_dictionary.json")
             self.hotword_mgr = HotwordManager(
                 self.dictionary,
                 self.config.correction.max_hotwords,
@@ -57,12 +58,6 @@ class PipelineRunner:
                 fuzzy_threshold=self.config.correction.fuzzy_match_score,
                 auto_apply_threshold=self.config.correction.auto_apply_threshold,
             )
-
-            # Initialize macro runner
-            self.macro_runner = MacroRunner(self.config.user_dir)
-
-            # Initialize mode manager
-            self.mode_mgr = ModeManager(macro_runner=self.macro_runner)
 
             # Create and load engine
             self.engine = create_engine(self.config)
@@ -88,8 +83,8 @@ class PipelineRunner:
 
             return True
 
-        except Exception as e:
-            logger.error("Failed to load pipeline: %s", e)
+        except Exception:
+            logger.exception("Failed to load pipeline")
             return False
 
     def process(self, audio: np.ndarray) -> str:
@@ -124,8 +119,8 @@ class PipelineRunner:
 
             return self._transcribe_and_format(audio_data)
 
-        except Exception as e:
-            logger.error("Error processing audio: %s", e)
+        except Exception:
+            logger.exception("Error processing audio")
             return ""
 
     def process_utterance(self, audio: np.ndarray, trim: bool = True) -> str:
@@ -159,8 +154,8 @@ class PipelineRunner:
 
             return self._transcribe_and_format(audio_data)
 
-        except Exception as e:
-            logger.error("Error processing utterance: %s", e)
+        except Exception:
+            logger.exception("Error processing utterance")
             return ""
 
     def _transcribe_and_format(self, audio_data: np.ndarray) -> str:
@@ -179,8 +174,7 @@ class PipelineRunner:
         if not result or not result.text.strip():
             return ""
 
-        apply_formatting = self.mode_mgr.mode == Mode.DICTATION if self.mode_mgr else True
-        return self.post_processor.process(result.text, apply_formatting=apply_formatting)
+        return self.post_processor.process(result.text)
 
     def unload(self) -> None:
         """Cleanup resources."""
