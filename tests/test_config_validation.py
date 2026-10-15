@@ -363,3 +363,47 @@ class TestConfigValidationEdgeCases:
             config = EngineConfig(device=device, compute_type=compute_type)
             assert config.device == device
             assert config.compute_type == compute_type
+
+
+# --- load/save robustness -------------------------------------------------------
+
+def test_unknown_and_empty_sections_load_with_defaults(tmp_path, caplog):
+    from wispr_dragon.config import Config
+
+    path = tmp_path / "c.yaml"
+    path.write_text("audio:\nengine:\n  beam_size: 4\n  retired_setting: 1\n")
+    config = Config.load(path)
+    assert config.engine.beam_size == 4
+    assert config.audio.sample_rate == 16000
+    assert "retired_setting" in caplog.text
+
+
+def test_save_defaults_to_the_file_it_was_loaded_from(tmp_path):
+    from wispr_dragon.config import Config
+
+    path = tmp_path / "custom.yaml"
+    Config().save(path)
+    config = Config.load(path)
+    config.server.api_key = "k"
+    config.save()
+    assert Config.load(path).server.api_key == "k"
+
+
+def test_save_load_round_trip_is_lossless(tmp_path):
+    from wispr_dragon.config import Config
+
+    path = tmp_path / "c.yaml"
+    original = Config()
+    original.engine.model_size = "base.en"
+    original.save(path)
+    assert Config.load(path) == original
+
+
+def test_first_run_save_goes_to_the_created_file(tmp_path):
+    from wispr_dragon.config import Config
+
+    path = tmp_path / "first.yaml"
+    config = Config.load(path)  # creates it
+    config.server.api_key = "k"
+    config.save()
+    assert Config.load(path).server.api_key == "k"

@@ -1,10 +1,14 @@
 """Configuration management for Wispr-Dragon."""
 
-from dataclasses import dataclass, field
+import logging
+import os
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 # New default path uses underscore
@@ -155,82 +159,72 @@ class Config:
             config.save(path)
             return config
 
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"{path}: expected a mapping at the top level")
 
         config = cls()
-        if "audio" in data:
-            config.audio = AudioConfig(**data["audio"])
-        if "engine" in data:
-            config.engine = EngineConfig(**data["engine"])
-        if "correction" in data:
-            config.correction = CorrectionConfig(**data["correction"])
-        if "ui" in data:
-            config.ui = UIConfig(**data["ui"])
-        if "security" in data:
-            config.security = SecurityConfig(**data["security"])
-        if "server" in data:
-            config.server = ServerConfig(**data["server"])
-        if "user_dir" in data:
+        for name, section_cls in _SECTIONS.items():
+            if name in data:
+                setattr(config, name, section_cls(**_section_kwargs(section_cls, data[name], name)))
+        if data.get("user_dir"):
             config.user_dir = Path(data["user_dir"])
+        # Later saves go back to the file this came from, not the default path.
+        config._path = path
+        _warn_if_key_exposed(path, config)
         return config
 
     def save(self, path: Optional[Path] = None) -> None:
-        path = path or DEFAULT_CONFIG_PATH
+        path = path or getattr(self, "_path", None) or DEFAULT_CONFIG_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        data = {
-            "audio": {
-                "sample_rate": self.audio.sample_rate,
-                "channels": self.audio.channels,
-                "dtype": self.audio.dtype,
-                "vad_threshold": self.audio.vad_threshold,
-                "silence_duration_ms": self.audio.silence_duration_ms,
-                "min_speech_duration_ms": self.audio.min_speech_duration_ms,
-                "max_utterance_seconds": self.audio.max_utterance_seconds,
-                "source": self.audio.source,
-                "network_host": self.audio.network_host,
-                "network_port": self.audio.network_port,
-            },
-            "engine": {
-                "backend": self.engine.backend,
-                "model_size": self.engine.model_size,
-                "device": self.engine.device,
-                "compute_type": self.engine.compute_type,
-                "language": self.engine.language,
-                "beam_size": self.engine.beam_size,
-                "initial_prompt": self.engine.initial_prompt,
-                "hotwords": self.engine.hotwords,
-            },
-            "correction": {
-                "auto_apply_threshold": self.correction.auto_apply_threshold,
-                "fuzzy_match_score": self.correction.fuzzy_match_score,
-                "max_hotwords": self.correction.max_hotwords,
-                "save_audio_segments": self.correction.save_audio_segments,
-            },
-            "ui": {
-                "backend": self.ui.backend,
-                "correction_shortcut": self.ui.correction_shortcut,
-                "overlay_enabled": self.ui.overlay_enabled,
-                "theme": self.ui.theme,
-            },
-            "security": {
-                "allow_python_scripts": self.security.allow_python_scripts,
-                "allow_yaml_macros": self.security.allow_yaml_macros,
-                "allow_program_launch": self.security.allow_program_launch,
-                "dictation_only": self.security.dictation_only,
-            },
-            "server": {
-                "enabled": self.server.enabled,
-                "host": self.server.host,
-                "port": self.server.port,
-                "api_key": self.server.api_key,
-                "tls_cert": self.server.tls_cert,
-                "tls_key": self.server.tls_key,
-                "max_connections": self.server.max_connections,
-            },
-            "user_dir": str(self.user_dir),
-        }
-        with open(path, "w") as f:
+        data = {name: asdict(getattr(self, name)) for name in _SECTIONS}
+        data["user_dir"] = str(self.user_dir)
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
         path.chmod(0o600)
+        # Remember it (covers first run, where load() creates the file).
+        self._path = path
+
+
+_SECTIONS = {
+    "audio": AudioConfig,
+    "engine": EngineConfig,
+    "correction": CorrectionConfig,
+    "ui": UIConfig,
+    "security": SecurityConfig,
+    "server": ServerConfig,
+}
+
+
+def _section_kwargs(section_cls, raw, name: str) -> dict:
+    """Keyword args for one config section, tolerating old or partial files.
+
+    An empty section (``audio:``) means defaults; keys this version doesn't
+    know (renamed or retired settings) are dropped with a warning instead of
+    crashing startup.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"config section '{name}' must be a mapping, got {type(raw).__name__}")
+    known = {f.name for f in fields(section_cls)}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        logger.warning("Ignoring unknown config key(s) in '%s': %s", name, ", ".join(unknown))
+    return {k: v for k, v in raw.items() if k in known}
+
+
+def _warn_if_key_exposed(path: Path, config: "Config") -> None:
+    """The server API key is a credential; flag a config others can read."""
+    if os.name != "posix" or not config.server.api_key:
+        return
+    try:
+        if path.stat().st_mode & 0o077:
+            logger.warning(
+                "%s holds the server api_key but is readable by other users — "
+                "run: chmod 600 %s", path, path,
+            )
+    except OSError:
+        pass
