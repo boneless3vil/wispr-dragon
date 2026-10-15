@@ -1,0 +1,5 @@
+# Normalize line endings: the repo is edited from both WSL and Windows
+# (over \\wsl.localhost), which otherwise lets stray CRLFs creep in.
+* text=auto eol=lf
+*.png binary
+*.ico binary

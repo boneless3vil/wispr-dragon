@@ -117,3 +117,12 @@ docs/dev-notes/
 # Claude Code — personal / machine-specific (agents/ and commands/ stay shared)
 .claude/settings.local.json
 .claude/*.local.json
+
+# Tool caches / CI output
+.ruff_cache/
+.mypy_cache/
+pytest-junit.xml
+
+# Editor-extension and one-off scratch files
+.sixth/
+_commit*.sh
