@@ -1,15 +1,28 @@
 """Tests for UI extensions (system tray, settings, macro editor)."""
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+import yaml
 
-from wispr_dragon.config import Config
-from wispr_dragon.ui.system_tray import SystemTray
-from wispr_dragon.ui.settings_dialog import SettingsDialog
-from wispr_dragon.ui.macro_editor import MacroEditor
+# Some tests build real Qt widgets; keep them headless.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from wispr_dragon.config import Config  # noqa: E402
+from wispr_dragon.ui.system_tray import SystemTray  # noqa: E402
+from wispr_dragon.ui.settings_dialog import SettingsDialog  # noqa: E402
+from wispr_dragon.ui.macro_editor import MacroEditor  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    """A QApplication for the tests that use real widgets."""
+    pytest.importorskip("PyQt6.QtWidgets")
+    from PyQt6.QtWidgets import QApplication
+    yield QApplication.instance() or QApplication([])
 
 
 class TestSystemTray:
@@ -68,15 +81,22 @@ class TestSystemTray:
         tray.toggle_action = None
         tray.set_recording_state(True)  # Should not raise
 
-    def test_system_tray_show_on_activate(self, tray, dictation_box):
-        """Test show dictation box on tray click."""
-        dictation_box.show = Mock()
-        dictation_box.raise_ = Mock()
+    def test_system_tray_show_on_activate(self, qapp, tmp_path):
+        """Show Dictation Box brings a *real* box forward.
 
-        tray._on_show_clicked()
+        DictationBox is a QObject wrapping its QMainWindow, not a widget. A Mock
+        box with a stubbed ``raise_`` hid the AttributeError this used to raise
+        (fatal in a Qt slot), so use the real thing.
+        """
+        from wispr_dragon.ui.dictation_box import DictationBox
 
-        dictation_box.show.assert_called_once()
-        dictation_box.raise_.assert_called_once()
+        box = DictationBox(Config(), tmp_path)
+        assert not box.window.isVisible()
+
+        SystemTray(box)._on_show_clicked()
+
+        assert box.window.isVisible()
+        box.window.close()
 
     def test_system_tray_show_handles_missing_box(self, dictation_box):
         """Test show handles when dictation box is None."""
@@ -463,6 +483,108 @@ class TestMacroEditor:
         except Exception:
             pass
 
+    def _fill_form(self, editor, trigger, action, target="", content=""):
+        editor.trigger_input = Mock(text=lambda: trigger)
+        editor.action_combo = Mock(currentText=lambda: action)
+        editor.target_input = Mock(text=lambda: target)
+        editor.content_input = Mock(toPlainText=lambda: content)
+        editor.selected_macro = None
+        editor.macro_list = Mock()
+
+    def test_saved_macro_loads_in_macro_runner(self, editor, user_dir):
+        """The editor must write the {"macros": [...]} shape MacroRunner reads."""
+        from wispr_dragon.macros.macro_runner import MacroRunner
+
+        self._fill_form(editor, "open editor", "launch", target="gedit")
+        editor._on_save_macro()
+
+        macro = MacroRunner(user_dir).find_macro("open editor")
+        assert macro is not None
+        assert macro["program"] == "gedit"
+
+    def test_save_with_traversal_trigger_stays_in_macros_dir(self, editor, user_dir):
+        self._fill_form(editor, "../escape", "text", content="hi")
+        editor._on_save_macro()
+
+        assert not (user_dir / "escape.yaml").exists()
+        assert len(list((user_dir / "macros").glob("*.yaml"))) == 1
+
+
+class TestMacroEditorCommandsTab:
+    """The Commands tab with real (offscreen) Qt widgets."""
+
+    @pytest.fixture
+    def user_dir(self, tmp_path):
+        return tmp_path
+
+    @pytest.fixture
+    def editor(self, qapp, user_dir):
+        from PyQt6.QtWidgets import QDialog
+
+        editor = MacroEditor(user_dir)
+        editor.dialog = QDialog()
+        editor._tab = editor._build_commands_tab()  # keep the widgets alive
+        yield editor
+        editor.dialog.close()
+
+    @staticmethod
+    def _write(user_dir, name, data):
+        path = user_dir / "macros" / name
+        path.write_text(yaml.safe_dump(data, sort_keys=False))
+        return path
+
+    @staticmethod
+    def _select(editor, path):
+        editor.macro_list.clear()
+        editor._load_macro_list()
+        items = [editor.macro_list.item(i) for i in range(editor.macro_list.count())]
+        item = next(i for i in items if i.text() == path.stem)
+        editor.macro_list.setCurrentItem(item)
+        editor._on_macro_selected(item)
+
+    def test_keystroke_macro_shows_and_keeps_its_keys(self, editor, user_dir):
+        from wispr_dragon.macros.macro_runner import MacroRunner
+
+        path = self._write(user_dir, "save_file.yaml", {"macros": [
+            {"trigger": "save file", "action": "keystroke", "keys": "ctrl+s"},
+        ]})
+        self._select(editor, path)
+        assert editor.target_input.text() == "ctrl+s"
+
+        editor._on_save_macro()
+
+        assert MacroRunner(user_dir).find_macro("save file")["keys"] == "ctrl+s"
+
+    def test_legacy_bare_list_file_still_loads(self, editor, user_dir):
+        """Files saved by older editor builds were a bare YAML list."""
+        path = self._write(user_dir, "open_browser.yaml", [
+            {"trigger": "open browser", "action": "launch", "program": "firefox"},
+        ])
+        self._select(editor, path)
+
+        assert editor.trigger_input.text() == "open browser"
+        assert editor.target_input.text() == "firefox"
+
+    def test_saving_keeps_other_macros_and_unmanaged_fields(self, editor, user_dir):
+        """Editing the first macro of a hand-written file must not lose the rest."""
+        from wispr_dragon.macros.macro_runner import MacroRunner
+
+        path = self._write(user_dir, "apps.yaml", {"macros": [
+            {"trigger": "open browser", "action": "launch", "program": "firefox",
+             "args": ["--private-window"]},
+            {"trigger": "open editor", "action": "launch", "program": "gedit"},
+        ]})
+        self._select(editor, path)
+        editor.target_input.setText("chromium")
+
+        editor._on_save_macro()
+
+        runner = MacroRunner(user_dir)
+        browser = runner.find_macro("open browser")
+        assert browser["program"] == "chromium"
+        assert browser["args"] == ["--private-window"]
+        assert runner.find_macro("open editor")["program"] == "gedit"
+
 
 class TestMacroEditorHelpers:
     """Qt-free helpers in macro_editor (command building + vocabulary)."""
@@ -497,6 +619,14 @@ class TestMacroEditorHelpers:
     def test_macro_filename_for(self):
         from wispr_dragon.ui.macro_editor import macro_filename_for
         assert macro_filename_for("open my app") == "open_my_app.yaml"
+
+    def test_macro_filename_for_cannot_escape_macros_dir(self, tmp_path):
+        from wispr_dragon.ui.macro_editor import macro_filename_for
+        assert macro_filename_for("../x") == "___x.yaml"
+        for trigger in ("../x", "..\\x", "a/b", "/etc/passwd", "C:\\evil", "..", "open {app}"):
+            name = macro_filename_for(trigger)
+            assert not any(sep in name for sep in ("/", "\\", ":")), name
+            assert (tmp_path / name).resolve().parent == tmp_path.resolve()
 
 
 class TestVocabularyHelpers:

@@ -17,10 +17,18 @@ headlessly.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Action -> the macro field the form's "Target" box edits (text macros use the
+# Content box instead). Mirrors build_macro_entry.
+_TARGET_FIELDS = {"launch": "program", "python_script": "script", "keystroke": "keys"}
+# Every field the form manages; anything else on a macro (e.g. a launch macro's
+# ``args``) is carried over untouched when it's edited.
+_FORM_FIELDS = {"trigger", "action", "content", *_TARGET_FIELDS.values()}
 
 
 def _check_pyqt6() -> bool:
@@ -67,9 +75,51 @@ def build_macro_entry(
     return macro
 
 
+def macro_target(macro: dict[str, Any]) -> str:
+    """The form's Target value for a macro — the inverse of build_macro_entry."""
+    field = _TARGET_FIELDS.get(macro.get("action", ""))
+    return str(macro.get(field) or "") if field else ""
+
+
+def merge_macro_edit(original: dict[str, Any], edited: dict[str, Any]) -> dict[str, Any]:
+    """Apply a form edit to an existing macro, keeping fields the form can't show."""
+    kept = {k: v for k, v in original.items() if k not in _FORM_FIELDS}
+    return {**edited, **kept}
+
+
+def read_macro_file(path: Path) -> list[dict[str, Any]]:
+    """Return the macros in a YAML file, accepting both on-disk shapes.
+
+    ``MacroRunner`` loads ``{"macros": [...]}``; older editor builds wrote a bare
+    list. Anything else yields an empty list.
+    """
+    import yaml
+
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if isinstance(data, dict):
+        data = data.get("macros")
+    if not isinstance(data, list):
+        return []
+    return [m for m in data if isinstance(m, dict)]
+
+
+def write_macro_file(path: Path, macros: list[dict[str, Any]]) -> None:
+    """Write macros in the ``{"macros": [...]}`` shape MacroRunner loads."""
+    import yaml
+
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump({"macros": macros}, f, sort_keys=False)
+
+
 def macro_filename_for(trigger: str) -> str:
-    """Derive a YAML filename stem+ext for a new macro trigger."""
-    return f"{trigger.strip().replace(' ', '_')}.yaml"
+    """Derive a YAML filename for a new macro trigger.
+
+    Anything but word characters and hyphens becomes ``_``, so a trigger can't
+    smuggle path separators or ``..`` out of the macros directory.
+    """
+    stem = re.sub(r"[^\w-]", "_", trigger.strip())
+    return f"{stem}.yaml"
 
 
 def add_custom_word(dictionary, word: str) -> bool:
@@ -226,7 +276,7 @@ class MacroEditor:
         editor_form.addRow("Action:", self.action_combo)
 
         self.target_input = QLineEdit()
-        self.target_input.setPlaceholderText("e.g., 'firefox' or 'my_script.py'")
+        self.target_input.setPlaceholderText("e.g., 'firefox', 'my_script.py' or 'ctrl+s'")
         editor_form.addRow("Target:", self.target_input)
 
         self.content_input = QTextEdit()
@@ -264,17 +314,15 @@ class MacroEditor:
     def _on_macro_selected(self, item) -> None:
         """Load selected macro into editor."""
         try:
-            import yaml
             macro_path = Path(item.data(256))
-            with open(macro_path) as f:
-                macros = yaml.safe_load(f) or []
+            macros = read_macro_file(macro_path)
 
-            if macros and isinstance(macros, list) and len(macros) > 0:
+            if macros:
                 macro = macros[0]
                 self.selected_macro = macro_path
                 self.trigger_input.setText(macro.get("trigger", ""))
                 self.action_combo.setCurrentText(macro.get("action", "launch"))
-                self.target_input.setText(macro.get("program") or macro.get("script") or "")
+                self.target_input.setText(macro_target(macro))
                 self.content_input.setText(macro.get("content") or "")
         except Exception as e:
             logger.error("Failed to load macro: %s", e)
@@ -303,8 +351,6 @@ class MacroEditor:
     def _on_save_macro(self) -> None:
         """Save current macro to YAML. Saving never trusts/executes the macro."""
         try:
-            import yaml
-
             try:
                 macro = build_macro_entry(
                     self.trigger_input.text(),
@@ -316,13 +362,19 @@ class MacroEditor:
                 logger.warning("%s", e)
                 return
 
+            macros = [macro]
             if self.selected_macro:
                 filename = self.selected_macro
+                # The form edits a file's first macro; keep the rest of a
+                # hand-written multi-macro file, and any fields the form
+                # doesn't show, rather than overwriting them.
+                existing = read_macro_file(filename) if filename.exists() else []
+                if existing:
+                    macros = [merge_macro_edit(existing[0], macro), *existing[1:]]
             else:
                 filename = self.macros_dir / macro_filename_for(macro["trigger"])
 
-            with open(filename, "w") as f:
-                yaml.dump([macro], f, default_flow_style=False)
+            write_macro_file(filename, macros)
 
             logger.info("Saved macro: %s", filename.name)
             self.macro_list.clear()

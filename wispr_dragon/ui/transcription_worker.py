@@ -43,13 +43,16 @@ class TranscriptionWorker:
         max_queue_size: int = 256,
         language: str = "en",
         beam_size: int = 10,
+        hotword_mgr=None,
     ):
         """Initialize transcription worker.
 
         Args:
             engine: TranscriptionEngine instance (already loaded).
             vad: VoiceActivityDetector instance (already loaded). Required.
-            post_processor: PostProcessor for text correction (optional).
+            post_processor: PostProcessor for text correction (optional). Leave
+                unset when the caller post-processes downstream (UIController's
+                orchestrator does, mode-aware) or every segment is processed twice.
             on_transcription: Callback when a final segment is ready. Signature:
                 on_transcription(live: str, final: Optional[str]). For this
                 worker, `live` is always "" and `final` carries the segment text.
@@ -58,10 +61,13 @@ class TranscriptionWorker:
                 the oldest chunks are dropped (with a warning).
             language: Transcription language passed to the engine.
             beam_size: Decoder beam size passed to the engine.
+            hotword_mgr: HotwordManager supplying the engine's initial_prompt /
+                hotwords vocabulary bias (optional; same as the server pipeline).
         """
         self.engine = engine
         self.vad = vad
         self.post_processor = post_processor
+        self.hotword_mgr = hotword_mgr
         self.on_transcription = on_transcription
         self.on_error = on_error
         self.language = language
@@ -139,9 +145,12 @@ class TranscriptionWorker:
                     segments_seen, len(segment) / 16000, self._queue.qsize(),
                 )
 
+                initial_prompt, hotwords = self._vocabulary_bias()
                 result = self.engine.transcribe(
                     segment,
                     language=self.language,
+                    initial_prompt=initial_prompt,
+                    hotwords=hotwords,
                     beam_size=self.beam_size,
                 )
                 text = (result.text if result else "").strip()
@@ -162,6 +171,21 @@ class TranscriptionWorker:
                     self.on_error(str(e))
 
         logger.info("Transcription worker stopped")
+
+    def _vocabulary_bias(self) -> tuple[str, str]:
+        """(initial_prompt, hotwords) for the engine; empty if unavailable.
+
+        The dictionary behind the hotword manager can be edited on the GUI thread
+        (vocabulary tab, correction window) while this runs, so a failed read
+        falls back to no bias rather than losing the whole segment.
+        """
+        if self.hotword_mgr is None:
+            return "", ""
+        try:
+            return self.hotword_mgr.get_initial_prompt(), self.hotword_mgr.get_hotwords()
+        except Exception as e:
+            logger.warning("Vocabulary bias unavailable for this segment: %s", e)
+            return "", ""
 
     def stop(self) -> None:
         """Signal the worker loop to exit. Safe to call from any thread."""

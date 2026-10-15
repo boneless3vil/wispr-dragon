@@ -117,7 +117,7 @@ class DictationBox(QObject):
     mic_state_changed = pyqtSignal(object)  # MicState — repaint the dot on GUI thread
 
     def __init__(self, config, user_dir: Path, on_text_ready=None, parent=None,
-                 on_toggle_mic=None):
+                 on_toggle_mic=None, on_cancel=None):
         """Initialize dictation box.
 
         Args:
@@ -127,12 +127,15 @@ class DictationBox(QObject):
             parent: Parent widget (usually None for top-level window)
             on_toggle_mic: Callback when the Mic button toggles capture
                 (receives paused: bool). Wired by UIController to gate audio.
+            on_cancel: Callback when the user cancels (Cancel / Esc). Wired by
+                UIController to end the session immediately.
         """
         super().__init__()
         self.config = config
         self.user_dir = user_dir
         self.on_text_ready = on_text_ready
         self.on_toggle_mic = on_toggle_mic
+        self.on_cancel = on_cancel
         self._mic_paused = False
         self.is_recording = False
         # Completed VAD segments accumulate here. final_text is their " "-join;
@@ -463,6 +466,8 @@ class DictationBox(QObject):
         self._timer.stop()
         self._set_recording_state(False)
         self.window.close()
+        if self.on_cancel:
+            self.on_cancel()
 
     def show(self):
         """Display the dictation box and start recording."""
@@ -474,6 +479,20 @@ class DictationBox(QObject):
         self._timer.start()
         self._set_recording_state(True)
         self.status_bar.showMessage("Recording... Press Escape to cancel")
+
+    def restore(self) -> None:
+        """Bring the box back to the front (tray "Show Dictation Box").
+
+        Unlike show(), this leaves the session alone: the elapsed timer, the
+        paused flag and the mic-state dot stay as they are, so restoring a
+        paused or sleeping box doesn't repaint it as recording.
+        """
+        if self.window.isMinimized():
+            self.window.showNormal()
+        else:
+            self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
 
     def close(self):
         """Close the dictation box."""

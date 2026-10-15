@@ -175,6 +175,60 @@ class TestTranscriptionWorker:
         post_processor.process.assert_called_once_with("hello world")
         on_transcription.assert_called_once_with(live="", final="HELLO WORLD")
 
+    @staticmethod
+    def _run_one_segment(worker, vad):
+        """Run the loop over a single segment; the VAD stops it on the way out."""
+        def process_chunk(_chunk):
+            worker.stop()
+            return np.zeros(16000, dtype=np.float32)
+
+        vad.process_chunk.side_effect = process_chunk
+        worker.enqueue_chunk(np.zeros(1600, dtype=np.float32))
+        worker.run()
+
+    def test_transcription_worker_passes_hotwords_to_engine(self, mock_engine, mock_vad):
+        """Bias the engine toward the user's vocabulary, as the server does."""
+        hotword_mgr = Mock()
+        hotword_mgr.get_initial_prompt.return_value = "Kubernetes, kubectl."
+        hotword_mgr.get_hotwords.return_value = "Kubernetes, kubectl"
+        worker = TranscriptionWorker(mock_engine, vad=mock_vad, hotword_mgr=hotword_mgr)
+
+        self._run_one_segment(worker, mock_vad)
+
+        kwargs = mock_engine.transcribe.call_args.kwargs
+        assert kwargs["initial_prompt"] == "Kubernetes, kubectl."
+        assert kwargs["hotwords"] == "Kubernetes, kubectl"
+
+    def test_transcription_worker_without_hotwords_sends_empty_bias(
+        self, mock_engine, mock_vad
+    ):
+        worker = TranscriptionWorker(mock_engine, vad=mock_vad)
+
+        self._run_one_segment(worker, mock_vad)
+
+        kwargs = mock_engine.transcribe.call_args.kwargs
+        assert kwargs["initial_prompt"] == ""
+        assert kwargs["hotwords"] == ""
+
+    def test_transcription_worker_hotword_failure_keeps_the_segment(
+        self, mock_engine, mock_vad
+    ):
+        """A failed bias lookup (e.g. dictionary edited mid-read) mustn't drop speech."""
+        hotword_mgr = Mock()
+        hotword_mgr.get_hotwords.side_effect = RuntimeError(
+            "dictionary changed size during iteration"
+        )
+        on_transcription = Mock()
+        worker = TranscriptionWorker(
+            mock_engine, vad=mock_vad, hotword_mgr=hotword_mgr,
+            on_transcription=on_transcription,
+        )
+
+        self._run_one_segment(worker, mock_vad)
+
+        assert mock_engine.transcribe.call_args.kwargs["hotwords"] == ""
+        on_transcription.assert_called_once_with(live="", final="hello world")
+
     def test_transcription_worker_run_error_handling(self, mock_vad):
         """Test error callback is invoked on transcription exception."""
         engine = Mock()

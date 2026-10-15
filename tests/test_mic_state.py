@@ -67,6 +67,34 @@ def test_observer_exception_is_isolated():
     assert good == [MicState.HOT]
 
 
+def test_importing_mic_state_does_not_pull_in_the_ui_stack():
+    # wispr_dragon.icons imports this module; the package __init__ used to drag
+    # in every dialog (and gpu_advisor via settings_dialog) along with it.
+    # Subprocess so sys.modules starts clean.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; import wispr_dragon.ui.mic_state; "
+        "heavy = [m for m in ('PyQt6.QtWidgets', 'wispr_dragon.ui.ui_controller', "
+        "'wispr_dragon.ui.settings_dialog', 'wispr_dragon.engine.gpu_advisor') "
+        "if m in sys.modules]; "
+        "assert not heavy, heavy"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_package_exports_still_resolve_lazily():
+    import pytest
+
+    import wispr_dragon.ui as ui
+    from wispr_dragon.ui.ui_controller import UIController
+
+    assert ui.UIController is UIController
+    with pytest.raises(AttributeError):
+        ui.NotAThing  # noqa: B018
+
+
 def test_mode_change_hook_drives_mic_state():
     # End-to-end seam: a sleep/wake utterance flips the indicator.
     c = MicStateController()

@@ -48,6 +48,8 @@ class UIController:
         self.audio_thread = None
         self.transcription_thread = None
         self.is_running = False
+        # Set by stop(); the audio thread parks on it once the stream is open.
+        self._stop_event = threading.Event()
 
         # Modes/commands pipeline — built in initialize() once the box exists,
         # since the action handlers operate on the box. None until then; when
@@ -59,8 +61,6 @@ class UIController:
         # Single source of truth for the OFF/STANDBY/HOT mic indicator.
         from .mic_state import MicStateController
         self.mic_state = MicStateController()
-        # Mic state captured at pause time, restored on resume (see _toggle_mic).
-        self._pre_pause_state = None
 
         # System tray — provides the Commands & Vocabulary browser entry point
         # and a mic-state indicator. Created in start(); None if unavailable.
@@ -87,7 +87,12 @@ class UIController:
             self.transcription_worker = TranscriptionWorker(
                 self.engine,
                 vad=self.vad,
-                post_processor=self.post_processor,
+                # No post-processing in the worker: the orchestrator does it,
+                # mode-aware (or _on_transcription, when there's none). Doing it
+                # here too formatted every segment twice — which, e.g., ate the
+                # "cap" in spelling mode and fed command matching formatted text.
+                post_processor=None,
+                hotword_mgr=self._build_hotword_manager(),
                 on_transcription=self._on_transcription,
                 on_error=self._on_error,
                 language=self.config.engine.language,
@@ -100,6 +105,7 @@ class UIController:
                 self.user_dir,
                 on_text_ready=self._on_text_ready,
                 on_toggle_mic=self._toggle_mic,
+                on_cancel=self.stop,
             )
 
             # Warn up front if the active injection backend can't reach native
@@ -133,6 +139,7 @@ class UIController:
 
         try:
             self.is_running = True
+            self._stop_event.clear()
 
             # Start audio worker thread
             self.audio_thread = threading.Thread(
@@ -162,8 +169,9 @@ class UIController:
             return False
 
     def stop(self):
-        """Stop dictation session (close UI + stop threads)."""
+        """Stop dictation session (close UI + stop threads). Idempotent."""
         self.is_running = False
+        self._stop_event.set()
         self.mic_state.set_capturing(False)
 
         if self.tray and self.tray.tray_widget:
@@ -186,22 +194,25 @@ class UIController:
             self.transcription_worker.stop()
             self.transcription_worker.reset()
 
-        # Wait for threads
-        if self.audio_thread and self.audio_thread.is_alive():
-            self.audio_thread.join(timeout=2)
-
-        if self.transcription_thread and self.transcription_thread.is_alive():
-            self.transcription_thread.join(timeout=2)
-
+        # No join: stop() runs on the GUI thread (Post / Cancel), and joining
+        # froze it for up to 4 s while an in-flight transcription finished. Both
+        # threads are daemons that exit on their own once signalled; a segment
+        # that lands afterwards is dropped by _on_transcription's is_running check.
         logger.info("Dictation session stopped")
 
     def _audio_thread_main(self):
-        """Run audio capture in separate thread."""
+        """Open the mic stream off the GUI thread, then park until stop().
+
+        Audio is delivered on PortAudio's own callback thread, so this thread
+        does no work once the stream is open. It parks (on an Event — no
+        polling) rather than exiting so the thread that opened the stream
+        outlives it, as before: some host APIs may tie state to the opening
+        thread (e.g. COM under WASAPI), and letting it exit early hasn't been
+        verified on every platform.
+        """
         try:
             if self.audio_worker.start_recording():
-                # Keep thread alive while recording
-                while self.is_running:
-                    threading.Event().wait(0.1)
+                self._stop_event.wait()
         except Exception as e:
             logger.error("Audio thread error: %s", e)
             if self.dictation_box:
@@ -234,11 +245,15 @@ class UIController:
         orchestrator so commands/mode switches/macros fire and only dictation
         text reaches the box.
         """
-        if not self.dictation_box:
+        # A segment can finish after Post/Cancel ended the session; drop it so it
+        # can't fire a keystroke or macro into whatever window has focus now.
+        if not self.is_running or not self.dictation_box:
             return
         try:
             if final:
                 if self.orchestrator is None:
+                    if self.post_processor is not None:
+                        final = self.post_processor.process(final)
                     self.dictation_box.update_transcription("", final)
                     return
                 outcome = self.orchestrator.handle_transcript(final)
@@ -254,20 +269,35 @@ class UIController:
 
     def _toggle_mic(self, paused: bool) -> None:
         """Mic button callback — gate audio capture and reflect it in mic state."""
-        from .mic_state import MicState
+        from ..modes.mode_manager import Mode
 
         if self.audio_worker:
             self.audio_worker.set_paused(paused)
-        # Paused => mic gated off (gray dot). Resuming restores the pre-pause
-        # state rather than forcing HOT, so pausing a sleeping (STANDBY) session
-        # and resuming doesn't silently wake the mic.
+        # Paused => mic gated off (gray dot). Resuming reflects the mode as it is
+        # *now*, not as it was at pause time: segments already in the pipeline
+        # keep being processed while paused, so a "go to sleep" / "wake up" may
+        # have changed it since (set_asleep is ignored while OFF).
         if paused:
-            self._pre_pause_state = self.mic_state.state
             self.mic_state.set_capturing(False)
         else:
             self.mic_state.set_capturing(True)
-            if self._pre_pause_state == MicState.STANDBY:
-                self.mic_state.set_asleep(True)
+            asleep = self.mode_mgr is not None and self.mode_mgr.mode == Mode.SLEEP
+            self.mic_state.set_asleep(asleep)
+
+    def _build_hotword_manager(self):
+        """Vocabulary bias for the engine (initial_prompt / hotwords), like the server.
+
+        Built from the post-processor's dictionary so learned corrections and
+        custom words bias recognition as well as fix it up afterwards. None when
+        there's no dictionary to draw from.
+        """
+        dictionary = getattr(self.post_processor, "dictionary", None)
+        if dictionary is None:
+            dictionary = self.dictionary
+        if dictionary is None:
+            return None
+        from ..correction.hotwords import HotwordManager
+        return HotwordManager(dictionary, self.config.correction.max_hotwords)
 
     def _apply_backend_hint(self) -> None:
         """Surface a hint in the box when the injection backend has caveats."""
@@ -297,9 +327,18 @@ class UIController:
         from ..modes.mode_manager import Mode
         from ..modes.transforms import build_transformers
 
-        self.macro_runner = MacroRunner(self.user_dir, text_injector=self.text_injector)
-        self.mode_mgr = ModeManager(macro_runner=self.macro_runner)
-        load_commands()
+        # Pass the in-memory security config so --dictation-only and a --config
+        # file apply here, not just whatever ~/.wispr_dragon/config.yaml says.
+        self.macro_runner = MacroRunner(
+            self.user_dir,
+            text_injector=self.text_injector,
+            security_cfg=self.config.security,
+        )
+        self.mode_mgr = ModeManager(
+            macro_runner=self.macro_runner,
+            dictation_only=self.config.security.dictation_only,
+        )
+        load_commands(user_dir=self.user_dir)
         self._register_mode_handlers()
         self.orchestrator = DictationOrchestrator(
             self.post_processor, self.mode_mgr, transformers=build_transformers()
@@ -311,7 +350,9 @@ class UIController:
         self.dictation_box.set_ui_action_handler(self._on_ui_action)
 
         # Mic-state wiring: the box observes state changes; sleep/wake mode
-        # transitions drive STANDBY <-> HOT. (set_mic_state is itself thread-safe.)
+        # transitions drive STANDBY <-> HOT. The mode callback fires on the worker
+        # thread, so every observer must marshal to the GUI thread itself (the
+        # box's and the tray's set_mic_state both do).
         self.mic_state.add_observer(self.dictation_box.set_mic_state)
         self.mode_mgr.set_mode_change_callback(
             lambda mode: self.mic_state.set_asleep(mode == Mode.SLEEP)
@@ -390,7 +431,12 @@ class UIController:
         self.tray = SystemTray(
             self.dictation_box,
             on_quit=on_quit,
+            on_toggle=self.dictation_box.toggle_mic,
             on_open_browser=self.open_command_vocab_browser,
+            # On macOS a click on the status item opens the menu *and* reports
+            # Trigger, so click-to-toggle would flip the mic on every menu open.
+            # There the menu's toggle item is the way in.
+            toggle_on_click=sys.platform != "darwin",
         )
         if self.tray.setup():
             # Drive the tray indicator from the same single source of truth.
@@ -411,10 +457,14 @@ class UIController:
 
         editor = MacroEditor(
             self.user_dir,
-            parent=self.dictation_box,
+            # The box is a QObject wrapper; the dialog's parent must be a widget.
+            parent=self.dictation_box.window if self.dictation_box else None,
             dictionary=self.dictionary,
         )
-        editor.show()
+        editor.show()  # modal — returns once the browser is closed
+        # Apply command edits now rather than on the next restart.
+        if self.macro_runner is not None:
+            self.macro_runner.reload_macros()
 
     def _run_macro(self, payload):
         """Confirm (in dictation mode) and execute a matched macro (GUI thread)."""
@@ -437,8 +487,11 @@ class UIController:
             target = macro.get("program") or macro.get("script")
             choice = dialog.show_and_ask(text, macro.get("trigger", ""), action, target)
             if choice == "no":
-                # User would rather type the trigger phrase as dictation.
+                # User would rather type the trigger phrase as dictation. The
+                # orchestrator only records undo history for text it emits, so
+                # record this segment too or "scratch that" drifts from the box.
                 self.dictation_box.update_transcription("", text)
+                self.mode_mgr.record_output(text)
                 return
             elif choice == "trust" and target:
                 dialog.trust_manifest.add_trust(target, is_script=(action == "python_script"))
