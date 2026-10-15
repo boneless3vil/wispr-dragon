@@ -1,10 +1,13 @@
-"""OpenAI API-based Whisper transcription backend.
+"""OpenAI API-based transcription backend.
 
-Supports OpenAI's cloud Whisper API, including the latest GPT 5.5 model.
+Sends audio to OpenAI's hosted transcription endpoint (``whisper-1`` or any
+other model name the API accepts, passed through from ``engine.model_size``).
 Requires OPENAI_API_KEY environment variable.
 """
 
+import io
 import logging
+import wave
 
 import numpy as np
 
@@ -12,11 +15,39 @@ from .base import TranscriptionEngine, TranscriptionResult, TranscriptionSegment
 
 logger = logging.getLogger(__name__)
 
+# Local faster-whisper size names mean nothing to the API (the shared config
+# defaults to "small.en"); map them to the hosted Whisper model.
+_LOCAL_MODEL_SIZES = {
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en",
+    "large", "large-v1", "large-v2", "large-v3", "large-v3-turbo", "turbo",
+    "distil-large-v3",
+}
+
+
+def _api_model_name(model_size: str) -> str:
+    if not model_size or model_size in _LOCAL_MODEL_SIZES:
+        if model_size:
+            logger.warning("model_size %r is a local Whisper size; using whisper-1", model_size)
+        return "whisper-1"
+    return model_size
+
+
+def _to_wav(audio: np.ndarray, sample_rate: int = 16000) -> io.BytesIO:
+    """16-bit mono WAV in memory — no ffmpeg/pydub needed, no gain change."""
+    pcm = (np.clip(audio.astype(np.float32).ravel(), -1.0, 1.0) * 32767).astype("<i2")
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm.tobytes())
+    buffer.seek(0)
+    return buffer
+
 
 class OpenAIAPIEngine(TranscriptionEngine):
-    """Transcription engine using the OpenAI Whisper API.
+    """Transcription engine using the OpenAI transcription API.
 
-    Supports all models available via the API, including GPT 5.5.
     Requires OPENAI_API_KEY environment variable.
     """
 
@@ -55,9 +86,11 @@ class OpenAIAPIEngine(TranscriptionEngine):
                 "Check your API key at https://platform.openai.com/account/api-keys"
             )
 
-        self._client = openai.OpenAI(api_key=api_key)
-        self._model = model_size
-        logger.info("OpenAI API engine initialized with model=%s", model_size)
+        # A stalled request must not freeze the server's engine thread for the
+        # SDK's 10-minute default.
+        self._client = openai.OpenAI(api_key=api_key, timeout=30.0, max_retries=1)
+        self._model = _api_model_name(model_size)
+        logger.info("OpenAI API engine initialized with model=%s", self._model)
 
     def transcribe(
         self,
@@ -70,23 +103,7 @@ class OpenAIAPIEngine(TranscriptionEngine):
         if self._client is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        import io
-        from pydub import AudioSegment
-
-        # Convert numpy array to MP3 bytes for API
-        audio_int16 = np.int16(audio / np.max(np.abs(audio)) * 32767)
-        audio_bytes = audio_int16.tobytes()
-
-        audio_segment = AudioSegment(
-            data=audio_bytes,
-            sample_width=2,
-            frame_rate=16000,
-            channels=1,
-        )
-
-        mp3_buffer = io.BytesIO()
-        audio_segment.export(mp3_buffer, format="mp3")
-        mp3_buffer.seek(0)
+        wav_buffer = _to_wav(audio)
 
         # Prepare prompt
         prompt = initial_prompt
@@ -96,36 +113,36 @@ class OpenAIAPIEngine(TranscriptionEngine):
         # Call OpenAI API
         transcript = self._client.audio.transcriptions.create(
             model=self._model,
-            file=("audio.mp3", mp3_buffer, "audio/mpeg"),
+            file=("audio.wav", wav_buffer, "audio/wav"),
             language=language,
             prompt=prompt or None,
             temperature=0.0,
-            response_format="verbose_json",
+            # Segment timings come only from whisper-1; the newer transcribe
+            # models accept plain "json" only.
+            response_format="verbose_json" if self._model == "whisper-1" else "json",
         )
 
         # Parse response
         segments = []
-        if hasattr(transcript, "segments"):
-            for seg in transcript.segments:
-                words = []
-                if hasattr(seg, "words"):
-                    words = [
-                        {
-                            "word": w.word,
-                            "start": w.start,
-                            "end": w.end,
-                            "probability": getattr(w, "probability", 1.0),
-                        }
-                        for w in seg.words
-                    ]
-                segment = TranscriptionSegment(
-                    text=seg.text.strip(),
-                    start=seg.start,
-                    end=seg.end,
-                    confidence=1.0,
-                    words=words,
-                )
-                segments.append(segment)
+        for seg in getattr(transcript, "segments", None) or []:
+            words = []
+            if getattr(seg, "words", None):
+                words = [
+                    {
+                        "word": w.word,
+                        "start": w.start,
+                        "end": w.end,
+                        "probability": getattr(w, "probability", 1.0),
+                    }
+                    for w in seg.words
+                ]
+            segments.append(TranscriptionSegment(
+                text=seg.text.strip(),
+                start=seg.start,
+                end=seg.end,
+                confidence=1.0,
+                words=words,
+            ))
 
         full_text = transcript.text.strip() if hasattr(transcript, "text") else ""
 
