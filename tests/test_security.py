@@ -348,3 +348,128 @@ def test_multiple_scripts_signed(security_policy, temp_user_dir):
     assert len(manifest) == 3
     for script_name in scripts:
         assert script_name in manifest
+
+
+# --- In-memory SecurityConfig (CLI / --config) -------------------------------
+
+from wispr_dragon.config import SecurityConfig  # noqa: E402
+from wispr_dragon.macros.security import is_safe_script_name  # noqa: E402
+
+
+def test_in_memory_security_cfg_is_preferred_over_disk(temp_user_dir):
+    """--dictation-only sets the in-memory config; the policy must see it even
+    though config.yaml on disk says otherwise."""
+    (temp_user_dir / "config.yaml").write_text("security:\n  dictation_only: false\n")
+    policy = SecurityPolicy(temp_user_dir, security_cfg=SecurityConfig(dictation_only=True))
+    assert policy.is_dictation_only() is True
+
+
+def test_in_memory_security_cfg_used_without_disk_config(temp_user_dir):
+    (temp_user_dir / "config.yaml").unlink()
+    cfg = SecurityConfig(allow_python_scripts=False, allow_program_launch=False)
+    policy = SecurityPolicy(temp_user_dir, security_cfg=cfg)
+    assert policy.allows_python_scripts() is False
+    assert policy.allows_program_launch() is False
+    assert policy.allows_yaml_macros() is True
+
+
+def test_lock_still_overrides_in_memory_cfg(temp_user_dir):
+    policy = SecurityPolicy(temp_user_dir, security_cfg=SecurityConfig())
+    policy.set_admin_lock("hash", {"allow_python_scripts": False})
+    assert policy.allows_python_scripts() is False
+
+
+def test_lock_cannot_loosen_a_stricter_config(temp_user_dir):
+    """The lock is a floor: config (or --dictation-only) may still tighten."""
+    policy = SecurityPolicy(
+        temp_user_dir,
+        security_cfg=SecurityConfig(dictation_only=True, allow_program_launch=False),
+    )
+    policy.set_admin_lock(
+        "hash", {"dictation_only": False, "allow_program_launch": True}
+    )
+    assert policy.is_dictation_only() is True
+    assert policy.allows_program_launch() is False
+
+
+@pytest.mark.parametrize("key,bad_value,getter,expected", [
+    ("allow_python_scripts", "true", "allows_python_scripts", False),
+    ("allow_yaml_macros", 1, "allows_yaml_macros", False),
+    ("allow_program_launch", "yes", "allows_program_launch", False),
+    ("dictation_only", "false", "is_dictation_only", True),
+    ("dictation_only", 0, "is_dictation_only", True),
+])
+def test_lock_non_bool_values_fail_closed(temp_user_dir, key, bad_value, getter, expected):
+    (temp_user_dir / "security.lock").write_text(
+        json.dumps({"password_hash": "x", "policy": {key: bad_value}})
+    )
+    policy = SecurityPolicy(temp_user_dir)
+    assert getattr(policy, getter)() is expected
+
+
+def test_disk_config_non_bool_values_fail_closed(temp_user_dir):
+    (temp_user_dir / "config.yaml").write_text(
+        'security:\n  allow_program_launch: "true"\n  dictation_only: "false"\n'
+    )
+    policy = SecurityPolicy(temp_user_dir)
+    assert policy.allows_program_launch() is False
+    assert policy.is_dictation_only() is True
+
+
+def test_corrupt_lock_file_fails_closed(temp_user_dir):
+    (temp_user_dir / "security.lock").write_text("{not json")
+    policy = SecurityPolicy(temp_user_dir)
+    assert policy.allows_python_scripts() is False
+    assert policy.allows_yaml_macros() is False
+    assert policy.allows_program_launch() is False
+    assert policy.is_dictation_only() is True
+
+
+def test_effective_policy_snapshot(temp_user_dir):
+    cfg = SecurityConfig(allow_python_scripts=False, dictation_only=True)
+    policy = SecurityPolicy(temp_user_dir, security_cfg=cfg)
+    assert policy.effective_policy() == {
+        "allow_python_scripts": False,
+        "allow_yaml_macros": True,
+        "allow_program_launch": True,
+        "dictation_only": True,
+    }
+
+
+def test_verify_admin_password(security_policy):
+    import bcrypt
+
+    assert security_policy.verify_admin_password("anything") is False  # no lock
+    pw_hash = bcrypt.hashpw(b"s3cret", bcrypt.gensalt()).decode()
+    security_policy.set_admin_lock(pw_hash, {})
+    assert security_policy.verify_admin_password("s3cret") is True
+    assert security_policy.verify_admin_password("wrong") is False
+
+
+# --- Script names and hash pinning -------------------------------------------
+
+@pytest.mark.parametrize("name,ok", [
+    ("my_script.py", True),
+    ("a.b.py", True),
+    ("../evil.py", False),
+    ("../../x.py", False),
+    ("sub/evil.py", False),
+    (r"..\evil.py", False),
+    ("/abs/evil.py", False),
+    ("C:evil.py", False),
+    ("", False),
+    (".", False),
+    ("..", False),
+    (None, False),
+])
+def test_is_safe_script_name(name, ok):
+    assert is_safe_script_name(name) is ok
+
+
+def test_check_script_bytes(security_policy, temp_user_dir):
+    script_file = temp_user_dir / "scripts" / "test.py"
+    script_file.write_bytes(b"print('hi')\n")
+    security_policy.sign_script(script_file)
+    assert security_policy.check_script_bytes("test.py", b"print('hi')\n") is True
+    assert security_policy.check_script_bytes("test.py", b"print('evil')\n") is False
+    assert security_policy.check_script_bytes("other.py", b"print('hi')\n") is False

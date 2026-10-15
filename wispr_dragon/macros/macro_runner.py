@@ -9,7 +9,8 @@ from typing import Optional
 
 import yaml
 
-from .security import SecurityPolicy
+from ..modes.triggers import compile_trigger, has_placeholder, match_placeholder, normalize_utterance
+from .security import SecurityPolicy, is_safe_script_name
 from .script_runner import ScriptRunner
 
 logger = logging.getLogger(__name__)
@@ -25,19 +26,21 @@ class MacroRunner:
     - python_script: Execute a signed Python script
     """
 
-    def __init__(self, user_dir: Path, text_injector=None):
+    def __init__(self, user_dir: Path, text_injector=None, security_cfg=None):
         """Initialize macro runner.
 
         Args:
             user_dir: User config directory (~/.wispr_dragon)
             text_injector: TextInjector instance for text injection actions
+            security_cfg: Optional in-memory ``config.SecurityConfig`` (carries
+                ``--config`` / ``--dictation-only``); else config.yaml is read.
         """
         self.user_dir = user_dir
         self.macros_dir = user_dir / "macros"
         self.scripts_dir = user_dir / "scripts"
         self.text_injector = text_injector
 
-        self.security = SecurityPolicy(user_dir)
+        self.security = SecurityPolicy(user_dir, security_cfg=security_cfg)
         self.script_runner = ScriptRunner(self.scripts_dir, self.security)
 
         self._macros_cache = {}
@@ -173,6 +176,10 @@ class MacroRunner:
         if not script_name:
             logger.error("Python script action missing 'script' field")
             return False
+        if not is_safe_script_name(script_name):
+            logger.error("Python script must be a bare file name in %s: %r",
+                         self.scripts_dir, script_name)
+            return False
 
         # Run script
         output = self.script_runner.run_script(script_name, timeout=30)
@@ -190,34 +197,65 @@ class MacroRunner:
         return True
 
     def _load_macros(self) -> None:
-        """Load all macros from YAML files in macros directory."""
+        """Load all macros from YAML files in macros directory.
+
+        Accepts both file shapes: ``{"macros": [...]}`` and a bare list (what
+        the macro editor saves). Nothing is loaded when the security policy
+        disallows YAML macros.
+        """
+        # Built aside and swapped in whole: the desktop app reloads on the GUI
+        # thread while the worker thread may be iterating the cache.
+        cache: dict = {}
+        self._macros_cache = cache
+
+        if not self.security.allows_yaml_macros():
+            logger.info("YAML macros are disabled by security policy; none loaded")
+            return
+
         if not self.macros_dir.exists():
             logger.warning("Macros directory not found: %s", self.macros_dir)
             return
 
-        self._macros_cache.clear()
+        cache = {}
 
         for yaml_file in self.macros_dir.glob("*.yaml"):
             try:
-                with open(yaml_file) as f:
-                    data = yaml.safe_load(f) or {}
+                with open(yaml_file, encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
 
-                macros_list = data.get("macros", [])
+                if isinstance(data, dict):
+                    macros_list = data.get("macros", [])
+                else:
+                    macros_list = data if isinstance(data, list) else []
+                if not isinstance(macros_list, list):
+                    macros_list = []
+
                 for macro in macros_list:
-                    trigger = macro.get("trigger", "").lower()
-                    if trigger:
-                        self._macros_cache[trigger] = macro
-                        logger.debug("Loaded macro: %s", trigger)
+                    if not isinstance(macro, dict):
+                        continue
+                    trigger = macro.get("trigger")
+                    if not isinstance(trigger, str) or not trigger.strip():
+                        continue
+                    # Compile placeholder triggers now: a malformed one is
+                    # reported once and skipped instead of failing at match time.
+                    if has_placeholder(trigger) and compile_trigger(trigger) is None:
+                        continue
+                    key = normalize_utterance(trigger)
+                    cache[key] = macro
+                    logger.debug("Loaded macro: %s", key)
 
             except Exception as e:
                 logger.error("Failed to load macros from %s: %s", yaml_file, e)
 
-        logger.info("Loaded %d macros", len(self._macros_cache))
+        self._macros_cache = cache
+        logger.info("Loaded %d macros", len(cache))
 
     def find_macro(self, text: str) -> Optional[dict]:
         """Find a macro that matches the given text.
 
-        Supports exact matching and placeholder extraction.
+        Supports exact matching and placeholder extraction; both match the
+        whole utterance, ignoring case and trailing sentence punctuation
+        ("Open browser." matches "open browser").
 
         Args:
             text: Voice-recognized text (e.g., "open firefox")
@@ -225,21 +263,23 @@ class MacroRunner:
         Returns:
             Macro dict with 'trigger' and 'action', or None if not found
         """
-        text_lower = text.lower().strip()
+        text_norm = normalize_utterance(text)
+        cache = self._macros_cache  # one consistent snapshot across a reload
 
         # Exact match
-        if text_lower in self._macros_cache:
-            return self._macros_cache[text_lower]
+        if text_norm in cache:
+            return cache[text_norm]
 
         # Placeholder match (e.g., "open {app}")
-        for trigger, macro in self._macros_cache.items():
-            if "{" in trigger:
-                pattern = re.escape(trigger).replace(r"\{", "(?P<").replace(r"\}", r">[\w\s]+)")
-                match = re.match(pattern, text_lower, re.IGNORECASE)
-                if match:
-                    macro = dict(macro)
-                    macro["_captured_args"] = match.groupdict()
-                    return macro
+        for key, macro in cache.items():
+            trigger = macro.get("trigger", key)
+            if not isinstance(trigger, str) or not has_placeholder(trigger):
+                continue
+            captured = match_placeholder(trigger, text_norm)
+            if captured is not None:
+                macro = dict(macro)
+                macro["_captured_args"] = captured
+                return macro
 
         return None
 

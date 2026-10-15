@@ -1,86 +1,140 @@
 """Security policy enforcement for macros and scripts."""
 
 import hashlib
+import hmac
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# Default (permissive) value of each policy flag, and its restrictive value.
+_POLICY_DEFAULTS = {
+    "allow_python_scripts": True,
+    "allow_yaml_macros": True,
+    "allow_program_launch": True,
+    "dictation_only": False,
+}
+_POLICY_RESTRICTIVE = {
+    "allow_python_scripts": False,
+    "allow_yaml_macros": False,
+    "allow_program_launch": False,
+    "dictation_only": True,
+}
+
+
+def is_safe_script_name(name: Any) -> bool:
+    """True if ``name`` is a bare file name that stays inside the scripts dir.
+
+    Rejects separators of either platform, absolute/drive paths, ``.``/``..``
+    and colons (Windows drive-relative paths and NTFS streams), so a YAML
+    ``script: ../../x.py`` can't point outside ``~/.wispr_dragon/scripts``.
+    """
+    if not isinstance(name, str) or not name or name in (".", ".."):
+        return False
+    if any(c in name for c in ("/", "\\", ":", "\x00")):
+        return False
+    path = Path(name)
+    return not path.is_absolute() and not path.drive and path.name == name
+
+
+def _as_policy_bool(key: str, value: Any, source: str) -> bool:
+    """Accept only real booleans; anything else (e.g. the string "false")
+    resolves to the restrictive setting instead of being truthy."""
+    if isinstance(value, bool):
+        return value
+    logger.warning(
+        "Security %s has non-boolean %s=%r; using the restrictive value", source, key, value
+    )
+    return _POLICY_RESTRICTIVE[key]
 
 
 class SecurityPolicy:
     """Manages security settings with 3-layer enforcement.
 
-    Layer 1: Config flags (allow_python_scripts, allow_yaml_macros, allow_program_launch)
-    Layer 2: Password-protected lock file (overrides config)
+    Layer 1: Config flags (allow_python_scripts, allow_yaml_macros,
+             allow_program_launch, dictation_only): the in-memory
+             SecurityConfig when given (so ``--config`` and CLI flags such as
+             ``--dictation-only`` apply), else ``<user_dir>/config.yaml``.
+    Layer 2: Password-protected lock file. It overrides config in the
+             restrictive direction: config can still tighten a locked policy
+             but never loosen it. A lock that can't be parsed, or that holds
+             a non-boolean value, fails closed.
     Layer 3: Script signing with SHA-256 manifest
     """
 
-    def __init__(self, user_dir: Path):
+    def __init__(self, user_dir: Path, security_cfg=None):
         """Initialize security policy.
 
         Args:
             user_dir: User config directory (~/.wispr_dragon)
+            security_cfg: Optional in-memory ``config.SecurityConfig``. When
+                given it is used instead of re-reading config.yaml from disk.
         """
         self.user_dir = user_dir
         self.config_file = user_dir / "config.yaml"
         self.lock_file = user_dir / "security.lock"
         self.scripts_dir = user_dir / "scripts"
         self.manifest_file = self.scripts_dir / ".manifest.json"
+        self.security_cfg = security_cfg
 
         self._config_cache = None
         self._lock_cache = None
 
     def allows_python_scripts(self) -> bool:
         """Check if Python scripts are allowed."""
-        # Layer 2 (lock) overrides Layer 1 (config)
-        if self.lock_file.exists():
-            lock_data = self._load_lock()
-            if lock_data:
-                policy = lock_data.get("policy", {})
-                if "allow_python_scripts" in policy:
-                    return policy["allow_python_scripts"]
-
-        # Default to Layer 1 (config)
-        return self._get_config_setting("security", {}).get("allow_python_scripts", True)
+        return self._policy("allow_python_scripts")
 
     def allows_yaml_macros(self) -> bool:
         """Check if YAML macros are allowed."""
-        if self.lock_file.exists():
-            lock_data = self._load_lock()
-            if lock_data:
-                policy = lock_data.get("policy", {})
-                if "allow_yaml_macros" in policy:
-                    return policy["allow_yaml_macros"]
-
-        return self._get_config_setting("security", {}).get("allow_yaml_macros", True)
+        return self._policy("allow_yaml_macros")
 
     def allows_program_launch(self) -> bool:
         """Check if program launching is allowed."""
-        if self.lock_file.exists():
-            lock_data = self._load_lock()
-            if lock_data:
-                policy = lock_data.get("policy", {})
-                if "allow_program_launch" in policy:
-                    return policy["allow_program_launch"]
-
-        return self._get_config_setting("security", {}).get("allow_program_launch", True)
+        return self._policy("allow_program_launch")
 
     def is_dictation_only(self) -> bool:
         """Check if only dictation is allowed (no commands/macros)."""
-        if self.lock_file.exists():
-            lock_data = self._load_lock()
-            if lock_data:
-                policy = lock_data.get("policy", {})
-                if "dictation_only" in policy:
-                    return policy["dictation_only"]
+        return self._policy("dictation_only")
 
-        return self._get_config_setting("security", {}).get("dictation_only", False)
+    def effective_policy(self) -> dict:
+        """Snapshot of the policy currently in force (config + lock)."""
+        return {key: self._policy(key) for key in _POLICY_DEFAULTS}
 
     def is_locked(self) -> bool:
         """Check if admin lock is active."""
         return self.lock_file.exists()
+
+    def _policy(self, key: str) -> bool:
+        """Resolve one flag: config value, tightened (never loosened) by the lock."""
+        value = self._config_value(key)
+        lock_value = self._lock_value(key)
+        if lock_value is not None and lock_value == _POLICY_RESTRICTIVE[key]:
+            return lock_value
+        return value
+
+    def _config_value(self, key: str) -> bool:
+        if self.security_cfg is not None:
+            raw = getattr(self.security_cfg, key, _POLICY_DEFAULTS[key])
+            return _as_policy_bool(key, raw, "config")
+        section = self._get_config_setting("security", {})
+        if not isinstance(section, dict):
+            return _POLICY_DEFAULTS[key]
+        return _as_policy_bool(key, section.get(key, _POLICY_DEFAULTS[key]), "config.yaml")
+
+    def _lock_value(self, key: str) -> Optional[bool]:
+        """The lock's value for ``key``; None if unlocked or the key is unset."""
+        if not self.lock_file.exists():
+            return None
+        lock_data = self._load_lock()
+        policy = lock_data.get("policy") if isinstance(lock_data, dict) else None
+        if not isinstance(policy, dict):
+            logger.error("Admin lock file is unreadable or malformed; failing closed")
+            return _POLICY_RESTRICTIVE[key]
+        if key not in policy:
+            return None
+        return _as_policy_bool(key, policy[key], "lock")
 
     def check_script_signature(self, script_path: Path) -> bool:
         """Verify a script against the signed manifest.
@@ -94,18 +148,24 @@ class SecurityPolicy:
         if not script_path.exists():
             logger.error("Script not found: %s", script_path)
             return False
+        try:
+            data = script_path.read_bytes()
+        except OSError as e:
+            logger.error("Failed to read script %s: %s", script_path, e)
+            return False
+        return self.check_script_bytes(script_path.name, data)
 
-        manifest = self._load_manifest()
-        script_name = script_path.name
-
-        if script_name not in manifest:
+    def check_script_bytes(self, script_name: str, data: bytes) -> bool:
+        """Verify already-read script bytes against the manifest entry for
+        ``script_name``. Callers then execute exactly these bytes, so the file
+        can't be swapped between the check and the run."""
+        stored_hash = self._load_manifest().get(script_name)
+        if not isinstance(stored_hash, str) or not stored_hash:
             logger.error("Script not signed: %s", script_name)
             return False
 
-        stored_hash = manifest[script_name]
-        actual_hash = self._hash_file(script_path)
-
-        if stored_hash != actual_hash:
+        actual_hash = hashlib.sha256(data).hexdigest()
+        if not hmac.compare_digest(stored_hash, actual_hash):
             logger.error("Script signature mismatch (modified?): %s", script_name)
             return False
 
@@ -170,6 +230,31 @@ class SecurityPolicy:
             logger.error("Failed to set admin lock: %s", e)
             return False
 
+    def verify_admin_password(self, password: str) -> bool:
+        """Check ``password`` against the active lock's bcrypt hash.
+
+        False if there is no lock, the lock is unreadable, or the hash is bad.
+        """
+        import bcrypt
+
+        if not self.lock_file.exists():
+            return False
+        lock_data = self._load_lock()
+        if not isinstance(lock_data, dict):
+            return False
+
+        stored_hash = lock_data.get("password_hash", "")
+        try:
+            if not isinstance(stored_hash, str) or not stored_hash or not bcrypt.checkpw(
+                password.encode(), stored_hash.encode()
+            ):
+                logger.error("Admin password mismatch")
+                return False
+        except ValueError:
+            logger.error("Stored admin password hash is malformed")
+            return False
+        return True
+
     def remove_admin_lock(self, password: str) -> bool:
         """Remove admin lock after verifying the admin password.
 
@@ -181,25 +266,11 @@ class SecurityPolicy:
         Returns:
             True if the password matches and the lock is removed
         """
-        import bcrypt
-
         if not self.lock_file.exists():
             logger.warning("No admin lock to remove")
             return False
 
-        lock_data = self._load_lock()
-        if not lock_data:
-            return False
-
-        stored_hash = lock_data.get("password_hash", "")
-        try:
-            if not stored_hash or not bcrypt.checkpw(
-                password.encode(), stored_hash.encode()
-            ):
-                logger.error("Admin password mismatch")
-                return False
-        except ValueError:
-            logger.error("Stored admin password hash is malformed")
+        if not self.verify_admin_password(password):
             return False
 
         try:
@@ -226,8 +297,10 @@ class SecurityPolicy:
 
         try:
             import yaml
-            with open(self.config_file) as f:
+            with open(self.config_file, encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
+            if not isinstance(config, dict):
+                return default
             return config.get(section, default)
         except Exception as e:
             logger.warning("Failed to load config: %s", e)
@@ -257,7 +330,8 @@ class SecurityPolicy:
 
         try:
             with open(self.manifest_file) as f:
-                return json.load(f)
+                manifest = json.load(f)
+            return manifest if isinstance(manifest, dict) else {}
         except Exception as e:
             logger.warning("Failed to load manifest: %s", e)
             return {}

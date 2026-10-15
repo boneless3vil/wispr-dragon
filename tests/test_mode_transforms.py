@@ -56,6 +56,54 @@ def test_numbers_passthrough_when_not_numeric():
     assert NumbersTransformer().transform("hello world") == "hello world"
 
 
+@pytest.mark.parametrize("text,expected", [
+    # Years / digit-group concatenation.
+    ("twenty twenty", "2020"),
+    ("nineteen ninety nine", "1999"),
+    ("twenty ten", "2010"),
+    ("nineteen hundred eighty four", "1984"),
+    ("twenty one hundred", "2100"),
+    # Digit strings (phone numbers, zip codes keep leading zeros).
+    ("five five five one two one two", "5551212"),
+    ("zero two one three nine", "02139"),
+    # Ordinary compound numbers still add up.
+    ("twenty five", "25"),
+    ("one hundred five", "105"),
+    ("one hundred and five", "105"),
+    ("two thousand and five", "2005"),
+    ("two thousand twenty", "2020"),
+    ("two million three hundred thousand", "2300000"),
+    # Fractions: oh/zero are digits; multi-word fractions keep every digit.
+    ("three point oh five", "3.05"),
+    ("three point zero five", "3.05"),
+    ("three point fourteen", "3.14"),
+    ("point five", "0.5"),
+    ("ten point five dollars", "$10.5"),
+])
+def test_numbers_transform_regressions(text, expected):
+    assert NumbersTransformer().transform(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    # No integer part and no fraction: nothing to convert.
+    "dollars",
+    "dollar",
+    "point",
+    "point dollars",
+    # Whisper already produced digits: leave them alone.
+    "10 dollars",
+    "2 thousand",
+    "$10",
+    "3.14",
+    # Unrecognised fraction tokens: don't guess, don't drop.
+    "three point banana",
+    "one point two point three",
+    "and",
+])
+def test_numbers_transform_leaves_text_unchanged(text):
+    assert NumbersTransformer().transform(text) == text
+
+
 # --- Orchestrator integration --------------------------------------------
 
 class FakePostProcessor:

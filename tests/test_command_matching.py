@@ -12,7 +12,7 @@ from wispr_dragon.modes.command_mode import (
 @pytest.fixture(autouse=True)
 def setup_commands():
     """Load from the default commands file."""
-    builtin = Path(__file__).parent.parent / "data" / "default_commands.yaml"
+    builtin = Path(__file__).parent.parent / "wispr_dragon" / "data" / "default_commands.yaml"
     if builtin.exists():
         load_commands(user_path=Path("/dev/null"))
 
@@ -69,7 +69,7 @@ class TestCommandRegistry:
 
     def test_registry_load_builtin_commands(self, registry):
         """Test loading built-in commands."""
-        builtin = Path(__file__).parent.parent / "data" / "default_commands.yaml"
+        builtin = Path(__file__).parent.parent / "wispr_dragon" / "data" / "default_commands.yaml"
         if builtin.exists():
             registry.load(user_path=Path("/dev/null"))
             assert len(registry.commands) > 0
@@ -139,7 +139,7 @@ class TestCommandRegistry:
 
     def test_registry_no_commands_auto_loads(self, registry):
         """Test that matching with empty registry auto-loads commands."""
-        builtin = Path(__file__).parent.parent / "data" / "default_commands.yaml"
+        builtin = Path(__file__).parent.parent / "wispr_dragon" / "data" / "default_commands.yaml"
         if builtin.exists():
             registry.match("scratch that")
             assert len(registry.commands) > 0
@@ -204,3 +204,100 @@ class TestCommandRegistry:
         # trigger, action, description are structural keys and not in args
         assert "trigger" not in result["args"]
         assert "action" not in result["args"]
+
+
+# --- Packaging: built-ins ship inside the package ----------------------------
+
+from wispr_dragon.modes import command_mode  # noqa: E402
+
+
+def test_builtin_commands_live_inside_the_package():
+    import wispr_dragon
+
+    pkg_dir = Path(wispr_dragon.__file__).resolve().parent
+    builtin = command_mode.builtin_commands_path()
+    assert builtin.is_file()
+    assert Path(str(builtin)).resolve().is_relative_to(pkg_dir)
+    assert (pkg_dir / "data" / "default_macros.yaml").is_file()
+
+
+def test_registry_loads_builtins_without_user_file(tmp_path):
+    registry = CommandRegistry(user_dir=tmp_path)  # no commands.yaml there
+    registry.load()
+    triggers = {c["trigger"] for c in registry.commands}
+    assert {"scratch that", "select all"} <= triggers
+
+
+def test_registry_user_dir_commands(tmp_path):
+    (tmp_path / "commands.yaml").write_text(
+        "commands:\n  - trigger: shout\n    action: keystroke\n    keys: F5\n"
+    )
+    registry = CommandRegistry(user_dir=tmp_path)
+    result = registry.match("shout")
+    assert result is not None and result["args"]["keys"] == "F5"
+
+
+def test_registry_does_not_reload_when_legitimately_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_mode, "builtin_commands_path", lambda: tmp_path / "missing.yaml")
+    registry = CommandRegistry(user_dir=tmp_path)
+    calls = []
+    real_load = registry.load
+    monkeypatch.setattr(registry, "load", lambda *a, **k: (calls.append(1), real_load(*a, **k)))
+    registry.match("anything")
+    registry.match("anything else")
+    assert registry.commands == []
+    assert len(calls) == 1
+
+
+# --- Trigger normalisation / placeholder patterns -----------------------------
+
+class TestTriggerMatching:
+
+    @pytest.fixture
+    def registry(self):
+        return CommandRegistry()
+
+    def test_trailing_punctuation_exact_match(self, registry):
+        registry.commands = [{"trigger": "select all", "action": "keystroke", "keys": "ctrl+a"}]
+        result = registry.match("Select all.")
+        assert result is not None and result["action"] == "keystroke"
+
+    def test_exact_beats_placeholder_with_punctuation(self, registry):
+        registry.commands = [
+            {"trigger": "open {app}", "action": "launch_any"},
+            {"trigger": "open browser", "action": "launch_browser"},
+        ]
+        assert registry.match("Open browser.")["action"] == "launch_browser"
+
+    def test_placeholder_capture_strips_punctuation(self, registry):
+        registry.commands = [{"trigger": "correct {word}", "action": "replace"}]
+        result = registry.match("Correct hello.")
+        assert result["args"]["word"] == "hello"
+
+    def test_placeholder_is_anchored(self, registry):
+        registry.commands = [{"trigger": "correct {word}", "action": "replace"}]
+        assert registry.match("please correct hello", threshold=101) is None
+
+    @pytest.mark.parametrize("bad", ["open {app", "open app}", "{a} {a}", "go {1x}"])
+    def test_invalid_placeholder_trigger_skipped(self, registry, bad):
+        registry.commands = [
+            {"trigger": bad, "action": "bad"},
+            {"trigger": "correct {word}", "action": "replace"},
+        ]
+        # No re.error; the valid trigger still matches.
+        assert registry.match("correct hello")["action"] == "replace"
+
+    def test_placeholder_triggers_not_fuzzy_matched(self, registry):
+        registry.commands = [{"trigger": "open {app}", "action": "launch"}]
+        # "open app" is a near-literal of the raw trigger text; it must not
+        # fuzzy-match and return a command with no captured args.
+        result = registry.match("open {app", threshold=50)
+        assert result is None or "app" in result["args"]
+
+
+def test_shared_trigger_helper_is_used_by_both_matchers():
+    from wispr_dragon.macros import macro_runner
+    from wispr_dragon.modes import triggers
+
+    assert command_mode.compile_trigger is triggers.compile_trigger
+    assert macro_runner.compile_trigger is triggers.compile_trigger

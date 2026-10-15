@@ -108,68 +108,97 @@ _SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000}
 _NUMBER_WORDS = set(_UNITS) | set(_TENS) | set(_SCALES) | {"and"}
 
 
-def _words_to_int(tokens: List[str]) -> Optional[int]:
-    """Convert a list of integer number-words to an int, or None if not numeric."""
-    if not tokens:
-        return None
-    current = 0
-    total = 0
-    saw_number = False
+def _classify(tok: str) -> Optional[str]:
+    if tok in _UNITS:
+        return "unit" if _UNITS[tok] < 10 else "teen"
+    if tok in _TENS:
+        return "tens"
+    if tok in _SCALES:
+        return "scale"
+    return None
+
+
+def _words_to_digits(tokens: List[str]) -> Optional[str]:
+    """Convert integer number-words to a digit string, or None if not numeric.
+
+    Words add up within a group ("twenty five" -> 25, "one hundred and five"
+    -> 105), but a unit after a unit/teen, or a tens/teen after a
+    unit/teen/tens, starts a new group, and groups are concatenated the way
+    people read years and digit strings: "twenty twenty" -> "2020",
+    "nineteen ninety nine" -> "1999", "five five five one two" -> "55512".
+    Returned as a string so leading zeros survive ("zero two one" -> "021").
+    """
+    groups: List[str] = []
+    total = current = 0
+    prev: Optional[str] = None
     for tok in tokens:
         if tok == "and":
             continue
-        if tok in _UNITS:
-            current += _UNITS[tok]
-            saw_number = True
-        elif tok in _TENS:
-            current += _TENS[tok]
-            saw_number = True
-        elif tok == "hundred":
+        kind = _classify(tok)
+        if kind is None:
+            return None
+        if (kind == "unit" and prev in ("unit", "teen")) or (
+            kind in ("tens", "teen") and prev in ("unit", "teen", "tens")
+        ):
+            groups.append(str(total + current))
+            total = current = 0
+        if tok == "hundred":
             current = (current or 1) * 100
-            saw_number = True
-        elif tok in _SCALES:
+        elif kind == "scale":
             total += (current or 1) * _SCALES[tok]
             current = 0
-            saw_number = True
         else:
-            return None
-    if not saw_number:
+            current += _UNITS[tok] if tok in _UNITS else _TENS[tok]
+        prev = kind
+    if prev is None:
         return None
-    return total + current
+    groups.append(str(total + current))
+    return "".join(groups)
 
 
 class NumbersTransformer(ModeTransformer):
-    """Convert spoken number words to digits, with decimals and simple currency."""
+    """Convert spoken number words to digits, with decimals and simple currency.
+
+    Text that already contains digits (Whisper often writes "10 dollars"
+    itself) or that isn't a number phrase is returned unchanged.
+    """
 
     def transform(self, text: str) -> str:
+        if any(ch.isdigit() for ch in text):
+            return text
         tokens = [t.lower() for t in re.findall(r"[A-Za-z]+", text)]
         if not tokens:
             return text
 
         currency = False
-        if tokens and tokens[-1] in ("dollar", "dollars"):
+        if tokens[-1] in ("dollar", "dollars"):
             currency = True
             tokens = tokens[:-1]
 
-        # Split on "point" for a decimal fraction; the fractional part is read
-        # as individual digits (Dragon behavior): "three point one four" -> 3.14.
+        # Split on "point" for a decimal fraction. Fraction words are read as
+        # digits (Dragon behavior): "three point one four" -> 3.14, and
+        # "oh"/"zero" are 0: "three point oh five" -> 3.05.
         if "point" in tokens:
             idx = tokens.index("point")
             int_tokens, frac_tokens = tokens[:idx], tokens[idx + 1:]
         else:
             int_tokens, frac_tokens = tokens, []
 
-        int_val = _words_to_int(int_tokens) if int_tokens else 0
-        if int_val is None:
+        if not int_tokens and not frac_tokens:
+            return text  # e.g. a bare "dollars" or "point"
+
+        int_digits = _words_to_digits(int_tokens) if int_tokens else "0"
+        if int_digits is None:
             return text  # not a number phrase — leave it alone
 
-        result = str(int_val)
+        result = int_digits
         if frac_tokens:
-            frac_digits = "".join(
-                str(_UNITS[t]) for t in frac_tokens if t in _UNITS and _UNITS[t] < 10
+            frac_digits = _words_to_digits(
+                ["zero" if t == "oh" else t for t in frac_tokens]
             )
-            if frac_digits:
-                result = f"{result}.{frac_digits}"
+            if frac_digits is None:
+                return text  # unrecognised fraction — don't guess or drop it
+            result = f"{result}.{frac_digits}"
 
         if currency:
             result = f"${result}"

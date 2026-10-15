@@ -9,6 +9,12 @@ handlers on the supplied `ModeManager` by each caller — the headless path inje
 text into the focused window, while the UI path edits the on-screen buffer — so
 those handlers genuinely differ and are not centralized here.
 
+Undo bookkeeping: by default every emitted segment's final text (after the mode
+transform) is recorded on the ModeManager, which is exactly what the dictation
+box renders. A caller that emits something different (the headless loop injects
+``text + " "``) passes ``record_outputs=False`` and calls
+``ModeManager.record_output`` itself with what it actually injected.
+
 The server pipeline (`server/pipeline_runner.py`) intentionally does NOT use this:
 it streams transcribed text to a remote client that performs injection, so command
 execution server-side would require a WebSocket protocol change (out of scope).
@@ -54,6 +60,8 @@ class DictationOrchestrator:
         transformers: optional ``{Mode: transformer}`` map where each transformer
             exposes ``transform(str) -> str``. Populated by Feature 2 (spelling /
             numbers); an empty map means plain dictation formatting only.
+        record_outputs: record each emitted segment's final text for "scratch
+            that" (default). Pass False if the caller records what it emits.
     """
 
     def __init__(
@@ -61,10 +69,12 @@ class DictationOrchestrator:
         post_processor,
         mode_manager: ModeManager,
         transformers: Optional[Dict[Mode, Any]] = None,
+        record_outputs: bool = True,
     ):
         self.post_processor = post_processor
         self.mode_manager = mode_manager
         self.transformers: Dict[Mode, Any] = dict(transformers) if transformers else {}
+        self.record_outputs = record_outputs
 
     @property
     def mode(self) -> Mode:
@@ -95,4 +105,8 @@ class DictationOrchestrator:
         if transformer is not None:
             output = transformer.transform(output)
 
-        return TranscriptOutcome(text=output)
+        outcome = TranscriptOutcome(text=output)
+        if self.record_outputs and outcome.has_text:
+            # Undo must remove what was emitted, i.e. the transformed text.
+            self.mode_manager.record_output(output)
+        return outcome

@@ -13,10 +13,9 @@ macros:
     program: gnome-terminal
     description: Open GNOME Terminal
 
-  - trigger: "open {app}"
-    action: launch
-    program: "{app}"
-    description: Open any application by name
+  # A catch-all "open {app}" -> program: "{app}" macro is deliberately NOT
+  # shipped: it would launch any binary on PATH that a misrecognition happens
+  # to name. Add one launch macro per program you actually want instead.
 
   # Text injection
   - trigger: "type my email"

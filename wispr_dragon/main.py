@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import dataclasses
 import getpass
 import logging
 import re
@@ -16,7 +17,7 @@ from .correction.hotwords import HotwordManager
 from .correction.post_processor import PostProcessor
 from .engine import create_engine
 from .macros.macro_runner import MacroRunner
-from .macros.security import SecurityPolicy
+from .macros.security import SecurityPolicy, is_safe_script_name
 from .modes.mode_manager import ModeManager, Mode
 from .output.text_injector import TextInjector
 
@@ -32,12 +33,31 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
-def _handle_sign_script(script_name: str, user_dir) -> int:
-    """Sign a Python script."""
-    scripts_dir = user_dir / "scripts"
-    script_path = scripts_dir / script_name
+def _security_policy(config: Config) -> SecurityPolicy:
+    """SecurityPolicy for the loaded config (honours --config and CLI flags)."""
+    return SecurityPolicy(config.user_dir, security_cfg=config.security)
 
-    security = SecurityPolicy(user_dir)
+
+def _confirm_admin_password(security: SecurityPolicy) -> bool:
+    """Prompt for the current admin password; True if it matches the lock."""
+    password = getpass.getpass("Admin lock is active. Enter admin password: ")
+    if security.verify_admin_password(password):
+        return True
+    print("✗ Admin password incorrect")
+    return False
+
+
+def _handle_sign_script(script_name: str, config: Config) -> int:
+    """Sign a Python script (requires the admin password while locked)."""
+    if not is_safe_script_name(script_name):
+        print(f"✗ Script must be a bare file name inside {config.user_dir / 'scripts'}: {script_name}")
+        return 1
+
+    security = _security_policy(config)
+    if security.is_locked() and not _confirm_admin_password(security):
+        return 1
+
+    script_path = config.user_dir / "scripts" / script_name
     if security.sign_script(script_path):
         print(f"✓ Script signed: {script_name}")
         return 0
@@ -46,9 +66,19 @@ def _handle_sign_script(script_name: str, user_dir) -> int:
         return 1
 
 
-def _handle_admin_lock(user_dir) -> int:
-    """Enable admin lock with password."""
+def _handle_admin_lock(config: Config) -> int:
+    """Enable admin lock with password.
+
+    The lock pins the policy currently in force (config + CLI flags + any
+    existing lock), so locking can only keep or tighten it, never loosen it.
+    Replacing an existing lock requires its password.
+    """
     import bcrypt
+
+    security = _security_policy(config)
+    if security.is_locked() and not _confirm_admin_password(security):
+        return 1
+    policy = security.effective_policy()
 
     password = getpass.getpass("Enter admin password: ")
     confirm = getpass.getpass("Confirm password: ")
@@ -59,14 +89,6 @@ def _handle_admin_lock(user_dir) -> int:
 
     password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
-    policy = {
-        "allow_python_scripts": True,
-        "allow_yaml_macros": True,
-        "allow_program_launch": True,
-        "dictation_only": False,
-    }
-
-    security = SecurityPolicy(user_dir)
     if security.set_admin_lock(password_hash, policy):
         print("✓ Admin lock enabled")
         return 0
@@ -75,14 +97,14 @@ def _handle_admin_lock(user_dir) -> int:
         return 1
 
 
-def _handle_admin_unlock(user_dir) -> int:
+def _handle_admin_unlock(config: Config) -> int:
     """Disable admin lock."""
     password = getpass.getpass("Enter admin password: ")
 
     # Pass the plaintext password — remove_admin_lock verifies it against the
     # stored hash with bcrypt.checkpw. Hashing here would produce a fresh salt
     # that could never match the stored hash.
-    security = SecurityPolicy(user_dir)
+    security = _security_policy(config)
     if security.remove_admin_lock(password):
         print("✓ Admin lock removed")
         return 0
@@ -91,9 +113,9 @@ def _handle_admin_unlock(user_dir) -> int:
         return 1
 
 
-def _handle_security_status(user_dir) -> int:
+def _handle_security_status(config: Config) -> int:
     """Show current security policy."""
-    security = SecurityPolicy(user_dir)
+    security = _security_policy(config)
     print("\n=== Wispr-Dragon Security Status ===\n")
 
     if security.is_locked():
@@ -180,8 +202,14 @@ def format_client_setup(api_key: str, host_ip: str, port: int, generated: bool) 
     )
 
 
-def _handle_server_mode(config: Config, print_key: bool = False) -> int:
-    """Launch WebSocket server for speech-to-text service."""
+def _handle_server_mode(
+    config: Config, print_key: bool = False, config_path: Path | None = None
+) -> int:
+    """Launch WebSocket server for speech-to-text service.
+
+    ``config_path`` is the ``--config`` file (None = default); a generated API
+    key is saved back there.
+    """
     try:
         from wispr_dragon.server.pipeline_runner import PipelineRunner
         from wispr_dragon.server.websocket_server import WebSocketServer
@@ -191,7 +219,7 @@ def _handle_server_mode(config: Config, print_key: bool = False) -> int:
             if generated:
                 import secrets
                 config.server.api_key = secrets.token_hex(16)
-                config.save()
+                config.save(config_path)
             print(
                 format_client_setup(
                     config.server.api_key,
@@ -233,9 +261,6 @@ def _handle_ui_mode(config: Config, inject_method: str = "auto") -> int:
         from PyQt6.QtWidgets import QApplication
 
         from .ui.ui_controller import UIController
-        from .correction.dictionary import UserDictionary
-        from .correction.post_processor import PostProcessor
-        from .output.text_injector import TextInjector
 
         app = QApplication.instance() or QApplication(sys.argv)
 
@@ -322,6 +347,133 @@ def create_audio_source(config: Config):
         )
 
 
+def _apply_cli_overrides(parser: argparse.ArgumentParser, args, config: Config) -> None:
+    """Apply engine/security CLI overrides through the dataclasses so their
+    ``__post_init__`` validation runs; invalid values are an argparse error."""
+    engine_overrides = {}
+    if args.model:
+        engine_overrides["model_size"] = args.model
+    if args.device:
+        engine_overrides["device"] = args.device
+    if args.compute_type:
+        engine_overrides["compute_type"] = args.compute_type
+    if args.beam_size is not None:
+        engine_overrides["beam_size"] = args.beam_size
+    if engine_overrides:
+        try:
+            config.engine = dataclasses.replace(config.engine, **engine_overrides)
+        except ValueError as e:
+            parser.error(str(e))
+    if args.dictation_only:
+        config.security = dataclasses.replace(config.security, dictation_only=True)
+
+
+def _register_headless_handlers(mode_mgr, injector, macro_runner, config: Config) -> None:
+    """Register the headless loop's command handlers on ``mode_mgr``."""
+
+    def handle_undo(text):
+        injector.undo(text)
+
+    def handle_correction(text, args=None):
+        # The correction window is a Qt dialog; the headless loop has no Qt
+        # event loop, so "correct that" is acknowledged but not actionable.
+        logger.info("Correction is not available in headless mode; run with --ui to use it")
+
+    def handle_keystroke(text, args=None):
+        keys = args.get("keys", "") if args else ""
+        if not keys:
+            return
+        if not _validate_keystroke(keys):
+            logger.error("Invalid keystroke pattern: %s", keys)
+            return
+        try:
+            subprocess.run(["xdotool", "key", "--clearmodifiers", keys], timeout=2)
+        except FileNotFoundError:
+            logger.error("xdotool not found")
+        except subprocess.TimeoutExpired:
+            logger.error("Keystroke command timed out")
+
+    def handle_macro(text, args=None):
+        """Handler for voice-triggered macros."""
+        if not args or "macro" not in args:
+            return
+
+        macro = args["macro"]
+        captured_args = macro.pop("_captured_args", None)
+
+        # If in dictation mode, show confirmation dialog
+        if mode_mgr.mode == Mode.DICTATION and not config.security.dictation_only:
+            from .ui.confirm_command import ConfirmationDialog
+
+            dialog = ConfirmationDialog(config.user_dir)
+            action = macro.get("action", "unknown")
+            target = macro.get("program") or macro.get("script")
+
+            choice = dialog.show_and_ask(text, macro.get("trigger", ""), action, target)
+
+            if choice == "no":
+                # ModeManager discards handler return values, so the phrase
+                # can't be re-emitted as dictation from here.
+                return
+            elif choice == "trust" and target:
+                # Add to trust list and execute
+                is_script = action == "python_script"
+                dialog.trust_manifest.add_trust(target, is_script=is_script)
+                macro_runner.execute(macro, captured_args)
+                return
+            elif choice is None:
+                # User cancelled
+                return
+            # choice == "yes": fall through to execute
+
+        success = macro_runner.execute(macro, captured_args)
+        logger.debug("Macro execution: %s", "success" if success else "failed")
+
+    mode_mgr.register_handler("undo_last", handle_undo)
+    mode_mgr.register_handler("open_correction_window", handle_correction)
+    mode_mgr.register_handler("keystroke", handle_keystroke)
+    mode_mgr.register_handler("macro", handle_macro)
+
+
+def _build_headless_pipeline(config: Config, post_processor, injector):
+    """Build the headless ModeManager + orchestrator.
+
+    Security settings come from the loaded config (so ``--config`` and
+    ``--dictation-only`` apply). The orchestrator doesn't record undo entries:
+    :func:`_emit_headless` records exactly what it injects.
+    """
+    from .modes.command_mode import load_commands
+    from .modes.orchestrator import DictationOrchestrator
+    from .modes.transforms import build_transformers
+
+    macro_runner = MacroRunner(
+        config.user_dir, text_injector=injector, security_cfg=config.security
+    )
+    mode_mgr = ModeManager(
+        macro_runner=macro_runner, dictation_only=config.security.dictation_only
+    )
+    load_commands(user_dir=config.user_dir)
+    _register_headless_handlers(mode_mgr, injector, macro_runner, config)
+
+    # Shared text pipeline (post-process -> mode/command dispatch -> transform),
+    # reused by the floating dictation box so the two paths don't drift.
+    orchestrator = DictationOrchestrator(
+        post_processor, mode_mgr, transformers=build_transformers(), record_outputs=False
+    )
+    return mode_mgr, orchestrator
+
+
+def _emit_headless(outcome, injector, mode_mgr) -> None:
+    """Inject one outcome's text (plus a separator space) and record exactly
+    the injected string so "scratch that" removes all of it."""
+    if not outcome.has_text:
+        return
+    emitted = outcome.text + " "
+    injector.inject(emitted)
+    mode_mgr.record_output(emitted)
+    logger.debug("Output: %s", outcome.text)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Wispr-Dragon Speech Recognition")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
@@ -368,40 +520,35 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.print_key and not args.server:
+        parser.error("--print-key requires --server")
 
     # Load config first
-    config = Config.load(Path(args.config) if args.config else None)
-    user_dir = config.user_dir
+    config_path = Path(args.config) if args.config else None
+    config = Config.load(config_path)
+
+    # Apply (validated) CLI overrides before anything dispatches, so --server,
+    # --ui and the admin commands all see them. --dictation-only only ever
+    # tightens policy, so it applies to --admin-lock / --security-status too.
+    _apply_cli_overrides(parser, args, config)
 
     # Handle admin commands (exit after executing)
     if args.sign_script:
-        return _handle_sign_script(args.sign_script, user_dir)
+        return _handle_sign_script(args.sign_script, config)
     if args.admin_lock:
-        return _handle_admin_lock(user_dir)
+        return _handle_admin_lock(config)
     if args.admin_unlock:
-        return _handle_admin_unlock(user_dir)
+        return _handle_admin_unlock(config)
     if args.security_status:
-        return _handle_security_status(user_dir)
+        return _handle_security_status(config)
     if args.clear_trust:
-        return _handle_clear_trust(user_dir)
+        return _handle_clear_trust(config.user_dir)
 
     setup_logging(args.verbose)
 
-    # Apply CLI overrides before any mode dispatches so --server and --ui honor them
-    if args.model:
-        config.engine.model_size = args.model
-    if args.device:
-        config.engine.device = args.device
-    if args.compute_type:
-        config.engine.compute_type = args.compute_type
-    if args.beam_size:
-        config.engine.beam_size = args.beam_size
-    if args.dictation_only:
-        config.security.dictation_only = True
-
     # Handle server mode
     if args.server:
-        return _handle_server_mode(config, print_key=args.print_key)
+        return _handle_server_mode(config, print_key=args.print_key, config_path=config_path)
 
     # Handle UI mode (launches floating dictation box)
     if args.ui:
@@ -418,12 +565,9 @@ def main():
     )
     injector = TextInjector(method=args.inject_method)
     logger.info("Text injection method: %s", injector.method)
-    macro_runner = MacroRunner(config.user_dir, text_injector=injector)
-    mode_mgr = ModeManager(macro_runner=macro_runner)
 
-    # Load command grammar
-    from .modes.command_mode import load_commands
-    load_commands()
+    # Modes, command grammar, handlers and the shared text pipeline.
+    mode_mgr, orchestrator = _build_headless_pipeline(config, post_processor, injector)
 
     # Create and load engine
     engine = create_engine(config)
@@ -450,75 +594,6 @@ def main():
         )
         vad.load()
         logger.info("VAD loaded")
-
-    # Register mode handlers
-    def handle_undo(text):
-        injector.undo(text)
-
-    def handle_correction(text, args=None):
-        from .ui.correction_window import CorrectionWindow
-        window = CorrectionWindow(dictionary)
-        window.show(text)
-
-    def handle_keystroke(text, args=None):
-        keys = args.get("keys", "") if args else ""
-        if not keys:
-            return
-        if not _validate_keystroke(keys):
-            logger.error("Invalid keystroke pattern: %s", keys)
-            return
-        try:
-            subprocess.run(["xdotool", "key", "--clearmodifiers", keys], timeout=2)
-        except FileNotFoundError:
-            logger.error("xdotool not found")
-        except subprocess.TimeoutExpired:
-            logger.error("Keystroke command timed out")
-
-    def handle_macro(text, args=None):
-        """Handler for voice-triggered macros."""
-        if not args or "macro" not in args:
-            return
-
-        macro = args["macro"]
-        captured_args = macro.pop("_captured_args", None)
-
-        # If in dictation mode, show confirmation dialog
-        if mode_mgr.mode == Mode.DICTATION and not config.security.dictation_only:
-            from .ui.confirm_command import ConfirmationDialog
-
-            dialog = ConfirmationDialog(config.user_dir)
-            action = macro.get("action", "unknown")
-            target = macro.get("program") or macro.get("script")
-
-            choice = dialog.show_and_ask(text, macro.get("trigger", ""), action, target)
-
-            if choice == "no":
-                # User wants to type it instead
-                return text
-            elif choice == "trust" and target:
-                # Add to trust list and execute
-                is_script = action == "python_script"
-                dialog.trust_manifest.add_trust(target, is_script=is_script)
-                return macro_runner.execute(macro, captured_args)
-            elif choice is None:
-                # User cancelled
-                return None
-            # choice == "yes": fall through to execute
-
-        success = macro_runner.execute(macro, captured_args)
-        logger.debug("Macro execution: %s", "success" if success else "failed")
-        return None
-
-    mode_mgr.register_handler("undo_last", handle_undo)
-    mode_mgr.register_handler("open_correction_window", handle_correction)
-    mode_mgr.register_handler("keystroke", handle_keystroke)
-    mode_mgr.register_handler("macro", handle_macro)
-
-    # Shared text pipeline (post-process -> mode/command dispatch -> transform),
-    # reused by the floating dictation box so the two paths don't drift.
-    from .modes.orchestrator import DictationOrchestrator
-    from .modes.transforms import build_transformers
-    orchestrator = DictationOrchestrator(post_processor, mode_mgr, transformers=build_transformers())
 
     # Signal handling
     running = True
@@ -561,11 +636,10 @@ def main():
             if not result or not result.text.strip():
                 continue
 
-            # Post-process + route through modes/commands via the shared pipeline.
+            # Post-process + route through modes/commands via the shared pipeline,
+            # then inject (and record for undo) exactly what is typed.
             outcome = orchestrator.handle_transcript(result.text)
-            if outcome.has_text:
-                injector.inject(outcome.text + " ")
-                logger.debug("Output: %s", outcome.text)
+            _emit_headless(outcome, injector, mode_mgr)
 
     finally:
         audio_source.stop()
