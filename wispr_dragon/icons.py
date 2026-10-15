@@ -1,10 +1,9 @@
 """Application icon assets and mic-state → icon mapping.
 
 Lives at the package root, *not* under ``ui/``, because the headless Windows
-client's tray needs these icons but must not import ``wispr_dragon.ui``: that
-package's ``__init__`` eagerly pulls in the whole desktop UI stack, and with it
-server-side deps (``rapidfuzz``) the lean client venv doesn't install. Importing
-this module costs nothing but PyQt6.
+client's tray needs these icons but should not depend on the desktop UI
+package (its modules pull in dialogs and the GPU advisor). Importing this
+module costs nothing but PyQt6.
 
 Two bundled PNGs back the mic indicator:
 

@@ -24,9 +24,9 @@ def _app():
 def test_icons_module_does_not_import_the_desktop_ui():
     """The headless client's tray imports icons — it must stay UI-free.
 
-    `wispr_dragon.ui.__init__` eagerly imports the whole desktop stack, pulling
-    in server-side deps (rapidfuzz) the lean client venv doesn't install. When
-    icons lived under ui/, that silently disabled the client's tray icon.
+    `wispr_dragon.ui` used to import the whole desktop stack eagerly; when icons
+    lived under ui/, that silently disabled the client's tray icon in the lean
+    client venv. Keep the client independent of ui/ regardless.
     Run in a subprocess so a clean sys.modules is guaranteed.
     """
     import subprocess

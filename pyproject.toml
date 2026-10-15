@@ -4,14 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wispr_dragon"
-version = "1.0.0"
+dynamic = ["version"]  # single source: wispr_dragon/__init__.py
 description = "Local speech recognition with Dragon NaturallySpeaking-like features"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [{name = "Jonathan Baldwin", email = "bonelessevil@gmail.com"}]
 requires-python = ">=3.11"
+# Base = what every role (client, server, desktop app) imports. The speech
+# engine lives in the `server`/`gui` extras so a Windows client install doesn't
+# pull CTranslate2/onnxruntime/av it never uses.
 dependencies = [
-    "faster-whisper>=1.1.0",
     "sounddevice>=0.5",
     "numpy>=1.24.0",
     "rapidfuzz>=3.0",
@@ -40,39 +42,52 @@ dependencies = [
 # means two CUDA runtimes coexist — works, but then also install the `cuda`
 # extra below for the CUDA-12 cuBLAS/cuDNN. CPU-only users skip all of this.
 [project.optional-dependencies]
-gui = ["PyQt6>=6.7", "torch>=2.0", "torchaudio>=2.0"]
+# torchaudio isn't imported by our code, but Silero VAD's hub module imports it.
+gui = [
+    "faster-whisper>=1.1.0",
+    "PyQt6>=6.7",
+    "pynput>=1.8",
+    "torch>=2.0",
+    "torchaudio>=2.0",
+]
 whisper-fallback = ["openai-whisper>=20240930"]
-openai-api = ["openai>=1.0", "pydub>=0.25"]
-server = ["websockets>=12.0,<13", "torch>=2.0", "torchaudio>=2.0"]
+openai-api = ["openai>=1.0"]
+server = ["faster-whisper>=1.1.0", "websockets>=12.0,<13", "torch>=2.0", "torchaudio>=2.0"]
 # CUDA-12 runtime libs for faster-whisper/CTranslate2 on NVIDIA GPUs.
 cuda = ["nvidia-cublas-cu12>=12.0", "nvidia-cudnn-cu12>=9.0,<10"]
 client = [
     "websockets>=12.0,<13",
-    "pystray>=0.19",
-    "Pillow>=10.0",
-    "pynput>=1.7",
+    # >=1.8: listener callbacks report `injected`, so the hotkey can ignore
+    # the client's own synthesized Ctrl+V.
+    "pynput>=1.8",
     "PyQt6>=6.7",
     "qasync>=0.27",
 ]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.6", "mypy>=1.8"]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/wispr_dragon"
-Documentation = "https://github.com/yourusername/wispr_dragon/blob/main/README.md"
-Repository = "https://github.com/yourusername/wispr_dragon.git"
-Issues = "https://github.com/yourusername/wispr_dragon/issues"
+Homepage = "https://github.com/boneless3vil/wispr-dragon"
+Documentation = "https://github.com/boneless3vil/wispr-dragon/blob/main/docs/USER_MANUAL.md"
+Repository = "https://github.com/boneless3vil/wispr-dragon.git"
+Issues = "https://github.com/boneless3vil/wispr-dragon/issues"
 
 [project.scripts]
 wispr_dragon = "wispr_dragon.main:main"
+
+[project.gui-scripts]
+wispr_dragon_client = "wispr_dragon.client.app:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "wispr_dragon.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["wispr_dragon*"]
 
 [tool.setuptools.package-data]
-# Bundle the mic on/off tray + window icons into the wheel. They live at the
-# package root (not under ui/) so the headless client can use them without
-# importing the desktop UI stack.
-"wispr_dragon" = ["assets/*.png"]
+# Bundle the mic on/off tray + window icons and the built-in command/macro
+# YAML into the wheel. Icons live at the package root (not under ui/) so the
+# headless client can use them without importing the desktop UI stack.
+"wispr_dragon" = ["assets/*.png", "data/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

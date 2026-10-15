@@ -11,10 +11,24 @@ for the whole session, so no test can ever touch the real user config.
 
 from __future__ import annotations
 
+import atexit
+import os
+import shutil
+import tempfile
 
-import pytest
+# Point the home directory at a throwaway dir BEFORE any wispr_dragon module is
+# imported: several modules resolve ~/.wispr_dragon (dictionary, commands,
+# client config) at import time, and a test that writes through one of those
+# would otherwise touch the developer's real data.
+_SANDBOX_HOME = tempfile.mkdtemp(prefix="wispr_test_home_")
+os.environ["HOME"] = os.environ["USERPROFILE"] = _SANDBOX_HOME
+atexit.register(shutil.rmtree, _SANDBOX_HOME, ignore_errors=True)
+# Headless Qt for every widget test (CI sets it too; this covers local runs).
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import wispr_dragon.config as config_mod
+import pytest  # noqa: E402
+
+import wispr_dragon.config as config_mod  # noqa: E402
 
 
 @pytest.fixture(autouse=True, scope="session")
