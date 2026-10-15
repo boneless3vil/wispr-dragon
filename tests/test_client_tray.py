@@ -104,3 +104,42 @@ def test_quit_action_triggers_client_stop(qapp, fake_client):
         fake_client.stop.assert_called_once()
     finally:
         tray.stop()
+
+
+def test_tray_starts_when_the_hotkey_failed(qapp):
+    """Regression: a bad "hotkey" config left client.hotkey None, and start()
+    died on ``client.hotkey.mode`` — swallowed as "tray init failed", leaving
+    an invisible process (console-less build) holding the mic and the lock."""
+    client = Mock()
+    client.hotkey = None
+    client.config = {"mode": "toggle"}
+    tray = TrayApp(client)
+    tray.start()
+    try:
+        assert tray.toggle_action.isChecked(), "falls back to the configured mode"
+        assert "Quit" in _menu_texts(tray)
+        tray.notify("Hotkey unavailable", "Could not register 'numpad_plus'")
+    finally:
+        tray.stop()
+
+
+def test_status_is_shown_in_the_tooltip(qapp, fake_client):
+    tray = TrayApp(fake_client)
+    tray.start()
+    try:
+        tray.set_status("authentication failed")
+        assert "authentication failed" in tray.tray.toolTip()
+        tray.update_recording_state(True)
+        assert "recording" in tray.tray.toolTip()
+        assert "authentication failed" in tray.tray.toolTip()
+        tray.set_status("")
+        assert "(" not in tray.tray.toolTip()
+    finally:
+        tray.stop()
+
+
+def test_notify_after_stop_is_a_noop(qapp, fake_client):
+    tray = TrayApp(fake_client)
+    tray.start()
+    tray.stop()
+    tray.notify("title", "message")  # must not raise

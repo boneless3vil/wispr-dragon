@@ -5,7 +5,7 @@ pure logic — autorepeat filtering, mode switching, key tracking — so it's
 fully testable without any real keyboard input.
 """
 
-from wispr_dragon.client.hotkey import HotkeyMode, HotkeyStateMachine
+from wispr_dragon.client.hotkey import Hotkey, HotkeyMode, HotkeyStateMachine
 
 
 # --- push-to-talk ---------------------------------------------------------
@@ -106,3 +106,64 @@ def test_switching_to_toggle_preserves_state():
     assert s.active is True       # stays on
     s.on_release()
     assert s.active is True       # toggle ignores release
+
+
+# --- listener event filtering (no pynput needed) ---------------------------
+
+def _hotkey_with_spy(mode=HotkeyMode.PTT):
+    events = []
+    hk = Hotkey(key_name="ctrl_r", mode=mode, on_active_changed=events.append)
+    hk._key = "HOTKEY"  # stand-in for the resolved pynput key
+    return hk, events
+
+
+def test_injected_events_are_ignored():
+    """The client's own paste chord (synthesized Ctrl) must not drive the
+    hotkey — pynput >= 1.8 flags it with injected=True."""
+    hk, events = _hotkey_with_spy()
+    hk._on_press_event("HOTKEY", True)
+    assert events == [] and hk.active is False
+    hk._on_press_event("HOTKEY", False)   # the user's real press
+    assert events == [True]
+    hk._on_release_event("HOTKEY", True)  # synthesized release: ignored
+    assert hk.active is True
+    hk._on_release_event("HOTKEY", False)
+    assert events == [True, False]
+
+
+def test_handlers_accept_pre_1_8_pynput_signature():
+    """pynput < 1.8 calls the handlers with just ``key``."""
+    hk, events = _hotkey_with_spy()
+    hk._on_press_event("HOTKEY")
+    hk._on_release_event("HOTKEY")
+    assert events == [True, False]
+
+
+def test_other_keys_are_ignored():
+    hk, events = _hotkey_with_spy()
+    hk._on_press_event("SOMETHING_ELSE")
+    assert events == []
+
+
+def test_injected_events_accepted_when_opted_in():
+    """allow_injected_hotkey: software triggers (VoiceAttack, AutoHotkey,
+    Stream Deck, pedals) send injected events and must work when enabled."""
+    events = []
+    hk = Hotkey(key_name="f8", on_active_changed=events.append, allow_injected=True)
+    hk._key = "HOTKEY"
+    hk._on_press_event("HOTKEY", True)
+    hk._on_release_event("HOTKEY", True)
+    assert events == [True, False]
+
+
+def test_first_dropped_injected_event_is_logged_once(caplog):
+    import logging
+
+    hk, _ = _hotkey_with_spy()
+    with caplog.at_level(logging.INFO, logger="wispr_dragon.client.hotkey"):
+        for _ in range(3):
+            hk._on_press_event("HOTKEY", True)
+            hk._on_release_event("HOTKEY", True)
+        hk._on_press_event("OTHER", True)  # other keys: not even considered
+    notes = [r for r in caplog.records if "allow_injected_hotkey" in r.getMessage()]
+    assert len(notes) == 1

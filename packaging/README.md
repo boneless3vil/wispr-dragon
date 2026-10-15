@@ -12,7 +12,7 @@ ships. The client bundle contains no ML stack, so it stays ~120 MB.
 | File | Purpose |
 |------|---------|
 | `client_entry.py` | Frozen entry point. PyInstaller needs a real script, and the package's `__main__.py` uses a relative import that only works under `python -m`; this shim imports `wispr_dragon.client.app:main` absolutely. |
-| `wispr_dragon_client.spec` | PyInstaller onedir spec. Bundles sounddevice's PortAudio DLL, names the Win32 pynput backends, and excludes the server/ML stack and unused Qt modules. |
+| `wispr_dragon_client.spec` | PyInstaller onedir spec. Bundles the tray icon artwork (`wispr_dragon/assets/*.png`), names the Win32 pynput backends and the lazily imported dialogs, and excludes the server/ML stack, the desktop UI (`wispr_dragon.ui`) and unused Qt modules. sounddevice's PortAudio DLL is picked up by pyinstaller-hooks-contrib's hook. |
 | `wispr_dragon_client.iss` | Inno Setup script that wraps the onedir output into a per-user double-click installer (Start-Menu shortcut + uninstaller, optional desktop icon). |
 
 ## Prerequisites (Windows)
@@ -26,7 +26,10 @@ $py = "$HOME\.venvs\wispr_dragon\Scripts\python.exe"
 ```
 
 Client deps, if starting fresh: `pip install -e ".[client]"` (from the repo),
-which pulls websockets, pynput, PyQt6, qasync, sounddevice, numpy.
+which pulls websockets (12.x), pynput (>= 1.8, for the injected-key filter),
+PyQt6, qasync and pystray/Pillow, plus the core sounddevice + numpy.
+PyInstaller 6.x with a current `pyinstaller-hooks-contrib` is required (the
+contrib hook is what bundles PortAudio).
 
 ## Build
 
@@ -60,7 +63,27 @@ Live test (needs the WSL server running — `wispr_dragon --server`):
 ```
 
 Point the client at the server via its config
-(`%LOCALAPPDATA%\WisprDragon\config.json`): `server_url`, `api_key`.
+(`%LOCALAPPDATA%\WisprDragon\config.json`): `server_url`, `api_key` (the
+first-run setup dialog writes both). Optional keys:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `hotkey` | `ctrl_r` | pynput key name (`f8`, `scroll_lock`, …) or a single character. |
+| `mode` | `ptt` | `ptt` (hold to talk) or `toggle` (press to start / stop). |
+| `inject_method` | `paste` | `paste` (clipboard + Ctrl+V) or `sendinput` (per-character keystrokes). |
+| `paste_settle_ms` | `250` | How long after Ctrl+V the previous clipboard text is restored (0–2000). Raise it if Office / Electron apps paste your *old* clipboard. The wait doesn't block audio capture. |
+| `allow_injected_hotkey` | `false` | Accept hotkey presses sent by software (VoiceAttack, AutoHotkey, Stream Deck, foot-pedal drivers). Off by default so the client's own synthesized Ctrl+V can't trip a Ctrl hotkey; the log notes the first ignored software press. |
+
+Dictation pasted via the clipboard is marked to stay out of Win+V clipboard
+history and cloud clipboard sync; your own clipboard text is put back afterwards
+(unless you copied something new in the meantime).
+
+The windowed build has no console; it logs to
+`%LOCALAPPDATA%\WisprDragon\client.log` (rotating, 1 MB x 3). Dictated text is
+only logged at DEBUG level, so it is not written there by default.
+
+To check the tray artwork made it into the bundle:
+`Test-Path "$HOME\wd_build\dist\WisprDragonClient\_internal\wispr_dragon\assets\mic_on.png"`.
 
 ## Installer (Inno Setup)
 
@@ -71,13 +94,15 @@ Wraps the onedir bundle into a single per-user installer. Requires Inno Setup 6
 ```powershell
 $iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 $iss  = "\\wsl.localhost\Ubuntu\home\jon\wispr_dragon\packaging\wispr_dragon_client.iss"
-& $iscc /O"$HOME\wd_build" /DSourceDir="$HOME\wd_build\dist\WisprDragonClient" $iss
+& $iscc /O"$HOME\wd_build" /DSourceDir="$HOME\wd_build\dist\WisprDragonClient" /DMyAppVersion=1.0.0 $iss
 ```
 
 Output: `$HOME\wd_build\WisprDragonClient-Setup-<version>.exe` (~35 MB,
 lzma2-compressed). Installs to the user's Programs folder with no UAC prompt,
 adds a Start-Menu shortcut + uninstaller, and offers an optional desktop icon.
-`/DSourceDir` overrides the bundle location; `/O` sets the output dir.
+`/DSourceDir` overrides the bundle location; `/DMyAppVersion` sets the version
+(default `1.0.0` — pass the pyproject version for real releases); `/O` sets the
+output dir.
 
 ## Notes & follow-ons
 
@@ -85,9 +110,13 @@ adds a Start-Menu shortcut + uninstaller, and offers an optional desktop icon.
   positives, reliable DLL loading). For a single-file `.exe`, set `onefile` by
   collapsing `EXE`/`COLLECT` into one `EXE(..., a.binaries, a.datas, ...)`; it
   unpacks to a temp dir each launch and is more AV-prone.
-- **console window**: the spec uses `console=True` so transcripts/logs are
-  visible. For a pure tray app, set `console=False` in the spec's `EXE(...)`.
-- **Icon**: add `icon='path\\to\\app.ico'` to `EXE(...)` once a real icon exists
-  (the tray currently uses Qt's built-in play/pause pixmaps as placeholders).
+- **console window**: the spec uses `console=False` (pure tray app). Logs go to
+  `client.log` (see above); problems such as a bad hotkey, a rejected API key
+  or a missing microphone are shown as tray notifications. For a debugging
+  build with a console, set `console=True` in the spec's `EXE(...)`.
+- **Icon**: the tray uses the bundled `wispr_dragon/assets/mic_on.png` /
+  `mic_off.png` (falling back to Qt's play/pause pixmaps only if they are
+  missing). The `.exe` itself still has no icon — add `icon='path\\to\\app.ico'`
+  to `EXE(...)` once an `.ico` exists.
 - **Console encoding**: `--list-devices` may show `?`/garbled `®`/`—` in older
   consoles — a cp1252 code-page artifact in print output, not a build problem.

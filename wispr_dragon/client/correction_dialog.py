@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -29,13 +30,16 @@ logger = logging.getLogger(__name__)
 
 
 class CorrectionDialog(QDialog):
-    """Modal correction dialog. Result via :meth:`result_correction`.
+    """Correction dialog, shown non-blocking. Result via :meth:`result_correction`.
 
-    Usage::
+    It is not modal: the client shows it with ``open()`` and reacts to
+    ``finished``, never ``exec()`` — a nested Qt loop inside an asyncio Task
+    wedges qasync (see client/app.py). It stays on top so it can't end up
+    hidden behind the app being dictated into while it captures speech::
 
         dlg = CorrectionDialog(original, dictionary)
-        if dlg.exec():
-            new_text, always = dlg.result_correction()
+        dlg.finished.connect(lambda code: code and use(dlg.result_correction()))
+        dlg.open()
     """
 
     def __init__(self, original_text: str, dictionary=None, parent=None):
@@ -44,12 +48,17 @@ class CorrectionDialog(QDialog):
         self._result: tuple[str, bool] | None = None
 
         self.setWindowTitle("Wispr Dragon — Correct that")
-        self.setModal(True)
+        # Windows' foreground lock can refuse to activate a window from a
+        # background process; staying on top at least keeps it visible.
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
         layout = QVBoxLayout(self)
 
         layout.addWidget(QLabel("Heard:"))
         heard = QLabel(f'"{original_text}"')
+        # Dictated text is data, not markup: without this, QLabel auto-detects
+        # rich text and a transcript like "<b>x</b>" would render as HTML.
+        heard.setTextFormat(Qt.TextFormat.PlainText)
         heard.setStyleSheet("font-weight: bold; color: #c0392b;")
         heard.setWordWrap(True)
         layout.addWidget(heard)
@@ -108,5 +117,18 @@ class CorrectionDialog(QDialog):
         text = self.correction_input.text().strip()
         if not text:
             return
-        self._result = (text, self.always_apply.isChecked())
+        original = self._original
+        core = original.strip()
+        if text == core:
+            # Unchanged. Report the original verbatim so the caller sees a
+            # no-op; stripping it (e.g. a dictated trailing newline) used to
+            # turn Apply-without-edit into a bogus correction.
+            self._result = (original, self.always_apply.isChecked())
+        else:
+            # Keep the whitespace around the original (e.g. "\n" from a "new
+            # line" command) — the single-line input can't show or edit it,
+            # and the replacement must not swallow it.
+            lead = original[: len(original) - len(original.lstrip())]
+            trail = original[len(original.rstrip()):] if core else ""
+            self._result = (lead + text + trail, self.always_apply.isChecked())
         self.accept()

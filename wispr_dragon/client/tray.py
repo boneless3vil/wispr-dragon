@@ -42,6 +42,8 @@ class TrayApp:
         # Remembered so a theme change can re-tint the icon for the *current*
         # recording state, not just reset it to idle.
         self._active = False
+        # Connection/problem note appended to the tooltip ("" when healthy).
+        self._status = ""
 
     def start(self) -> None:
         """Build the tray icon + menu. Requires a QApplication to exist."""
@@ -63,7 +65,7 @@ class TrayApp:
 
         self.toggle_action = QAction("Toggle mode  (press to start / stop)")
         self.toggle_action.setCheckable(True)
-        self.toggle_action.setChecked(self.client.hotkey.mode == HotkeyMode.TOGGLE)
+        self.toggle_action.setChecked(self._current_mode() == HotkeyMode.TOGGLE)
         self.toggle_action.toggled.connect(self._on_toggle_mode)
         self.menu.addAction(self.toggle_action)
 
@@ -104,11 +106,28 @@ class TrayApp:
         self._active = active
         if self.state_action is not None:
             self.state_action.setText("Recording: ON  ●" if active else "Recording: OFF")
-        if self.tray is not None:
-            self.tray.setToolTip(
-                "Wispr Dragon — recording" if active else "Wispr Dragon — idle"
-            )
+        self._refresh_tooltip()
         self._refresh_icon(active)
+
+    def set_status(self, status: str) -> None:
+        """Show a connection/problem note in the tooltip ("" clears it)."""
+        self._status = status or ""
+        self._refresh_tooltip()
+
+    def notify(self, title: str, message: str, warning: bool = True) -> None:
+        """Pop a tray balloon/toast — the only visible channel in the
+        console-less build, so failures that would otherwise be silent
+        (bad hotkey, auth rejected, mic missing) are surfaced here."""
+        if self.tray is None:
+            return
+        icon = (
+            QSystemTrayIcon.MessageIcon.Warning if warning
+            else QSystemTrayIcon.MessageIcon.Information
+        )
+        try:
+            self.tray.showMessage(title, message, icon, 10000)
+        except Exception as e:  # pragma: no cover - platform tray quirks
+            logger.warning("Could not show tray message: %s", e)
 
     def stop(self) -> None:
         """Hide and release the tray icon."""
@@ -117,6 +136,26 @@ class TrayApp:
             self.tray = None
 
     # --- internals --------------------------------------------------------
+
+    def _current_mode(self) -> HotkeyMode:
+        """The hotkey mode to show. The hotkey may be None when its listener
+        failed to start (e.g. an unknown key name) — fall back to the
+        configured mode instead of crashing the whole tray."""
+        hotkey = getattr(self.client, "hotkey", None)
+        if hotkey is not None:
+            return hotkey.mode
+        try:
+            return HotkeyMode(self.client.config.get("mode", "ptt"))
+        except Exception:
+            return HotkeyMode.PTT
+
+    def _refresh_tooltip(self) -> None:
+        if self.tray is None:
+            return
+        tip = "Wispr Dragon — recording" if self._active else "Wispr Dragon — idle"
+        if self._status:
+            tip += f" ({self._status})"
+        self.tray.setToolTip(tip)
 
     def _refresh_icon(self, active: bool) -> None:
         """Show the mic artwork for the current state (red = recording).

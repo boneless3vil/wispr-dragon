@@ -104,10 +104,19 @@ class Hotkey:
         key_name: str = "ctrl_r",
         mode: HotkeyMode = HotkeyMode.PTT,
         on_active_changed: Optional[Callable[[bool], None]] = None,
+        allow_injected: bool = False,
     ):
+        """Args:
+            allow_injected: Accept synthesized (software-injected) hotkey
+                events. Off by default so the client's own paste chord can't
+                drive the hotkey; turn on for software triggers such as
+                VoiceAttack, AutoHotkey, Stream Deck or foot-pedal drivers.
+        """
         self._key_name = key_name
         self._state = HotkeyStateMachine(mode)
         self._on_active_changed = on_active_changed
+        self._allow_injected = allow_injected
+        self._reported_injected = False
         self._listener = None
         self._key = None
         self._lock = threading.Lock()
@@ -147,8 +156,26 @@ class Hotkey:
                 self._notify(self._state.active)
         logger.info("Hotkey mode -> %s", mode.value)
 
-    def _on_press_event(self, key) -> None:
-        if key != self._key:
+    # ``injected`` is passed by pynput >= 1.8 (True for synthesized input).
+    # Ignore those by default: the client's own paste chord (Ctrl+V via
+    # SendInput) arrives as a Ctrl event and must not toggle or release the
+    # dictation hotkey. The default keeps the handlers compatible with
+    # pynput < 1.8, which passes only ``key``.
+    def _drop_injected(self, injected: bool) -> bool:
+        if not injected or self._allow_injected:
+            return False
+        if not self._reported_injected:
+            self._reported_injected = True
+            logger.info(
+                "Ignoring a software-injected %s hotkey event (VoiceAttack, "
+                "AutoHotkey, Stream Deck, foot pedals and the like send these). "
+                'Set "allow_injected_hotkey": true in the client config to accept them.',
+                self._key_name,
+            )
+        return True
+
+    def _on_press_event(self, key, injected: bool = False) -> None:
+        if key != self._key or self._drop_injected(injected):
             return
         with self._lock:
             prev = self._state.active
@@ -156,8 +183,8 @@ class Hotkey:
         if now != prev:
             self._notify(now)
 
-    def _on_release_event(self, key) -> None:
-        if key != self._key:
+    def _on_release_event(self, key, injected: bool = False) -> None:
+        if key != self._key or self._drop_injected(injected):
             return
         with self._lock:
             prev = self._state.active

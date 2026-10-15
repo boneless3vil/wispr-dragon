@@ -21,7 +21,7 @@ import struct
 import sys
 import time
 from ctypes import wintypes
-from typing import Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,24 @@ _VK_V = 0x56
 _CF_UNICODETEXT = 13
 _GMEM_MOVEABLE = 0x0002
 # Restore the prior clipboard this long after Ctrl+V, giving the target app time
-# to read the paste before we put the old contents back.
-_PASTE_SETTLE_S = 0.12
+# to read the paste before we put the old contents back. 120 ms proved too short
+# for Office / Electron apps (they read the clipboard late and pasted the
+# *restored* text). Override per machine with the client config key
+# ``paste_settle_ms``.
+DEFAULT_PASTE_SETTLE_MS = 250
+_MAX_PASTE_SETTLE_MS = 2000
+# Registered clipboard formats that keep dictation (often sensitive, and only on
+# the clipboard as a delivery mechanism) out of Win+V clipboard history and out
+# of cloud clipboard sync.
+# https://learn.microsoft.com/windows/win32/dataxchg/clipboard-formats#cloud-clipboard-and-clipboard-history-formats
+# Deliberately NOT "ExcludeClipboardContentFromMonitorProcessing": that hides the
+# content from *every* clipboard monitor, including RDP / VM clipboard
+# redirection — pasting into a remote-desktop window would then paste stale text.
+_PRIVATE_CLIPBOARD_FORMATS = (
+    "CanIncludeInClipboardHistory",   # DWORD 0 => don't add to history
+    "CanUploadToCloudClipboard",      # DWORD 0 => don't sync to other devices
+)
+_DWORD_ZERO = b"\x00\x00\x00\x00"
 
 # ULONG_PTR is pointer-sized; ctypes.wintypes does not define it.
 _ULONG_PTR = ctypes.c_size_t
@@ -123,6 +139,41 @@ def _ctrl_v_inputs() -> list:
     ]
 
 
+def sanitize_text(text: str) -> str:
+    """Normalize text before injecting it.
+
+    ``\\r\\n`` collapses to ``\\n`` and every other C0 control character except
+    ``\\n`` and ``\\t`` is removed: a stray control code from the engine (or a
+    hostile transcript) must not become a keystroke such as Escape, Backspace
+    or Ctrl+<letter> in the focused app. Pure, so it is tested off Windows.
+    """
+    if not text:
+        return ""
+    text = text.replace("\r\n", "\n")
+    return "".join(ch for ch in text if ch in "\n\t" or ord(ch) >= 0x20)
+
+
+def _clipboard_text(text: str) -> str:
+    """Windows clipboard convention: CF_UNICODETEXT lines end in CRLF."""
+    return text.replace("\n", "\r\n")
+
+
+def _settle_seconds(paste_settle_ms) -> float:
+    """Validate the configured settle delay (ms) and return seconds."""
+    if paste_settle_ms is None:
+        return DEFAULT_PASTE_SETTLE_MS / 1000
+    try:
+        ms = float(paste_settle_ms)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid paste_settle_ms %r; using %d ms", paste_settle_ms, DEFAULT_PASTE_SETTLE_MS
+        )
+        return DEFAULT_PASTE_SETTLE_MS / 1000
+    if ms != ms:  # NaN
+        ms = DEFAULT_PASTE_SETTLE_MS
+    return min(max(ms, 0.0), _MAX_PASTE_SETTLE_MS) / 1000
+
+
 def _text_to_inputs(text: str) -> list:
     """Convert text into a flat list of key-down/key-up INPUT events.
 
@@ -147,17 +198,40 @@ class WindowsTextInjector:
     #: Supported injection methods.
     METHODS = ("paste", "sendinput")
 
-    def __init__(self, method: str = "paste"):
+    def __init__(
+        self,
+        method: str = "paste",
+        paste_settle_ms=None,
+        scheduler: Optional[Callable[[float, Callable[[], None]], object]] = None,
+    ):
         """Args:
             method: ``"paste"`` (clipboard + Ctrl+V, default and most robust) or
                 ``"sendinput"`` (per-character synthesized keystrokes — useful
                 where paste isn't honored, e.g. some terminals). Unknown values
                 fall back to ``"paste"``.
+            paste_settle_ms: How long to wait after Ctrl+V before restoring the
+                previous clipboard. None => DEFAULT_PASTE_SETTLE_MS.
+            scheduler: ``scheduler(delay_s, callback)`` runs ``callback`` later
+                and returns a handle with ``cancel()`` (e.g. asyncio's
+                ``loop.call_later``), or None if it can't. Used for the
+                clipboard restore so a paste doesn't block the caller's event
+                loop (and with it audio capture) for the settle delay. Without
+                one, the restore happens inline after a blocking sleep.
         """
         self.set_method(method)
+        self.paste_settle_s = _settle_seconds(paste_settle_ms)
+        self.scheduler = scheduler
         self.available = sys.platform == "win32"
         self._user32 = None
         self._kernel32 = None
+        self._private_formats: Optional[list] = None  # registered format ids
+        # While the clipboard holds dictation we put there: its sequence number
+        # and the user's text from before our first paste (None: it held no
+        # text). A paste that lands before the restore keeps *this* snapshot —
+        # snapshotting again would capture our own earlier dictation.
+        self._owned_seq: Optional[int] = None
+        self._owned_saved: Optional[str] = None
+        self._restore_handle = None
         if not self.available:
             logger.warning(
                 "WindowsTextInjector is inert off Windows (platform=%s)", sys.platform
@@ -203,6 +277,10 @@ class WindowsTextInjector:
         u32.GetClipboardData.restype = ctypes.c_void_p
         u32.SetClipboardData.argtypes = (wintypes.UINT, ctypes.c_void_p)
         u32.SetClipboardData.restype = ctypes.c_void_p
+        u32.GetClipboardSequenceNumber.argtypes = ()
+        u32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+        u32.RegisterClipboardFormatW.argtypes = (wintypes.LPCWSTR,)
+        u32.RegisterClipboardFormatW.restype = wintypes.UINT
 
     def inject(self, text: str) -> bool:
         """Insert ``text`` into whatever window currently has keyboard focus.
@@ -214,6 +292,7 @@ class WindowsTextInjector:
             True if the text was delivered, False otherwise (empty text, not on
             Windows, or the input was blocked).
         """
+        text = sanitize_text(text)
         if not text or not self.available:
             return False
         if self.method == "sendinput":
@@ -233,6 +312,7 @@ class WindowsTextInjector:
         """
         if not self.available or old_len < 0:
             return False
+        new_text = sanitize_text(new_text)
         if old_len:
             self._send(_backspaces(old_len))
         if not new_text:
@@ -262,21 +342,92 @@ class WindowsTextInjector:
         silently emits corrupted text ("I checked" -> "I eeecked") — far worse
         than injecting nothing. Callers who want the keystroke path must opt in
         with ``method="sendinput"``.
+
+        Setting the clipboard and the Ctrl+V are synchronous; the restore is
+        scheduled ``paste_settle_s`` later via ``scheduler`` so the caller's
+        event loop isn't blocked meanwhile.
+
+        Only text clipboard contents are saved/restored; images, files and rich
+        formats are not snapshotted.
         """
-        saved = self._get_clipboard_text()
-        if not self._set_clipboard_text(text):
+        if self._owned_seq is not None and self._clipboard_sequence() == self._owned_seq:
+            # Our previous dictation is still on the clipboard (its restore
+            # hasn't run yet, or there was no text to restore): keep the user's
+            # original snapshot rather than snapshotting our own text.
+            saved = self._owned_saved
+        else:
+            saved = self._get_clipboard_text()
+        self._cancel_restore()
+        if not self._set_clipboard_text(_clipboard_text(text), private=True):
             logger.error(
                 "Could not take the clipboard; skipping injection of %d chars. "
                 "Another app may be holding it. Set inject_method='sendinput' to "
                 "type instead of paste.", len(text),
             )
+            self._restore_clipboard()  # put back anything a cancelled restore owed
             return False
+        # Fingerprint of *our* clipboard contents. If it changes before we
+        # restore, the user (or an app) copied something new during the settle
+        # window — restoring then would clobber their copy.
+        self._owned_seq = self._clipboard_sequence()
+        self._owned_saved = saved
         ok = self._send(_ctrl_v_inputs())
         # Let the target consume the paste before restoring the prior clipboard.
-        time.sleep(_PASTE_SETTLE_S)
-        if saved is not None:
-            self._set_clipboard_text(saved)
+        self._schedule_restore()
         return ok
+
+    def _schedule_restore(self) -> None:
+        handle = None
+        if self.scheduler is not None:
+            try:
+                handle = self.scheduler(self.paste_settle_s, self._restore_clipboard)
+            except Exception as e:
+                logger.debug("Restore scheduler failed (%s); restoring inline", e)
+                handle = None
+        if handle is None:
+            time.sleep(self.paste_settle_s)
+            self._restore_clipboard()
+        else:
+            self._restore_handle = handle
+
+    def _cancel_restore(self) -> None:
+        handle, self._restore_handle = self._restore_handle, None
+        if handle is not None:
+            try:
+                handle.cancel()
+            except Exception:
+                pass
+
+    def flush_restore(self) -> None:
+        """Run a pending clipboard restore now (e.g. at shutdown)."""
+        if self._restore_handle is not None:
+            self._cancel_restore()
+            self._restore_clipboard()
+
+    def _restore_clipboard(self) -> None:
+        """Put the user's clipboard text back, unless they copied meanwhile."""
+        self._restore_handle = None
+        if self._owned_seq is None:
+            return
+        if self._clipboard_sequence() != self._owned_seq:
+            logger.info("Clipboard changed during paste; leaving the new contents in place")
+            self._owned_seq = self._owned_saved = None
+            return
+        if self._owned_saved is None:
+            # Nothing textual to restore; the clipboard keeps our dictation and
+            # stays "owned" so the next paste doesn't snapshot it as the user's.
+            return
+        # The user's own content: restored *without* the privacy formats — it
+        # is theirs, and may legitimately belong in history / sync.
+        self._set_clipboard_text(self._owned_saved, private=False)
+        self._owned_seq = self._owned_saved = None
+
+    def _clipboard_sequence(self) -> int:  # pragma: no cover - Windows-only path
+        """The clipboard's change counter (0 if unavailable)."""
+        try:
+            return int(self._user32.GetClipboardSequenceNumber())
+        except Exception:
+            return 0
 
     def _open_clipboard(self) -> bool:  # pragma: no cover - Windows-only path
         """Open the clipboard, retrying briefly if another app holds it."""
@@ -287,27 +438,57 @@ class WindowsTextInjector:
         logger.warning("Could not open clipboard (held by another app)")
         return False
 
-    def _set_clipboard_text(self, text: str) -> bool:  # pragma: no cover - Win-only
-        """Place ``text`` on the clipboard as CF_UNICODETEXT. Returns success."""
+    def _private_format_ids(self) -> list:  # pragma: no cover - Windows-only path
+        """Registered ids of _PRIVATE_CLIPBOARD_FORMATS (cached; 0s dropped)."""
+        if self._private_formats is None:
+            ids = []
+            for name in _PRIVATE_CLIPBOARD_FORMATS:
+                try:
+                    fmt = self._user32.RegisterClipboardFormatW(name)
+                except Exception:
+                    fmt = 0
+                if fmt:
+                    ids.append(fmt)
+            self._private_formats = ids
+        return self._private_formats
+
+    def _set_clipboard_data(self, fmt: int, data: bytes) -> bool:  # pragma: no cover
+        """Copy ``data`` into a global block and hand it to the clipboard.
+
+        The clipboard must already be open. On success the system owns the
+        handle — do not free it. On failure we must, or the moveable block leaks.
+        """
+        handle = self._kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
+        if not handle:
+            return False
+        ptr = self._kernel32.GlobalLock(handle)
+        if not ptr:
+            self._kernel32.GlobalFree(handle)
+            return False
+        ctypes.memmove(ptr, data, len(data))
+        self._kernel32.GlobalUnlock(handle)
+        if not self._user32.SetClipboardData(fmt, handle):
+            self._kernel32.GlobalFree(handle)
+            return False
+        return True
+
+    def _set_clipboard_text(self, text: str, private: bool = False) -> bool:  # pragma: no cover
+        """Place ``text`` on the clipboard as CF_UNICODETEXT. Returns success.
+
+        ``private=True`` (dictation) also sets the formats that keep it out of
+        Win+V history and cloud clipboard sync.
+        """
         if not self._open_clipboard():
             return False
         try:
             self._user32.EmptyClipboard()
             data = text.encode("utf-16-le") + b"\x00\x00"
-            handle = self._kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
-            if not handle:
+            if not self._set_clipboard_data(_CF_UNICODETEXT, data):
                 return False
-            ptr = self._kernel32.GlobalLock(handle)
-            if not ptr:
-                self._kernel32.GlobalFree(handle)
-                return False
-            ctypes.memmove(ptr, data, len(data))
-            self._kernel32.GlobalUnlock(handle)
-            # On success the system owns the handle — do not free it. On failure
-            # we must, or the moveable block leaks.
-            if not self._user32.SetClipboardData(_CF_UNICODETEXT, handle):
-                self._kernel32.GlobalFree(handle)
-                return False
+            if private:
+                for fmt in self._private_format_ids():
+                    if not self._set_clipboard_data(fmt, _DWORD_ZERO):
+                        logger.debug("Could not set private clipboard format %d", fmt)
             return True
         finally:
             self._user32.CloseClipboard()

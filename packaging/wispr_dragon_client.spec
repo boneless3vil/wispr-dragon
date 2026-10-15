@@ -12,22 +12,24 @@ captures audio, streams it over a WebSocket, and injects the returned text.
 
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files
 
 # SPECPATH is the directory containing this spec (…/packaging); the repo root
 # is its parent, and must be on pathex so `wispr_dragon` imports during analysis.
 REPO_ROOT = os.path.dirname(SPECPATH)
 ENTRY = os.path.join(SPECPATH, "client_entry.py")
 
-# sounddevice ships the PortAudio DLL as a data/binary payload; pull both so the
-# frozen client can open the mic without a system PortAudio install.
-datas = collect_data_files("sounddevice")
-binaries = collect_dynamic_libs("sounddevice")
+# Tray icon artwork (wispr_dragon/assets/mic_on.png, mic_off.png), loaded by
+# wispr_dragon/icons.py relative to the package. Without these the frozen tray
+# falls back to Qt's generic play/pause pixmaps.
+# PortAudio needs nothing here: pyinstaller-hooks-contrib's sounddevice hook
+# bundles the _sounddevice_data DLL (collect_*("sounddevice") returned []).
+datas = collect_data_files("wispr_dragon", includes=["assets/*.png"])
 
 a = Analysis(
     [ENTRY],
     pathex=[REPO_ROOT],
-    binaries=binaries,
+    binaries=[],
     datas=datas,
     hiddenimports=[
         "sounddevice",
@@ -49,6 +51,9 @@ a = Analysis(
         # stray transitive import can't bloat the bundle with CUDA or models.
         "torch", "faster_whisper", "ctranslate2", "whisper", "openai",
         "wispr_dragon.engine", "wispr_dragon.server",
+        # Desktop UI. The client only reaches it via icons.icon_for_mic_state(),
+        # which the client tray never calls (it uses mic_on_icon/mic_off_icon).
+        "wispr_dragon.ui",
         # Unused GUI/plotting weight.
         "matplotlib", "tkinter",
         "PyQt6.QtWebEngineCore", "PyQt6.QtWebEngineWidgets", "PyQt6.QtWebChannel",
@@ -69,9 +74,9 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    # Tray UI is the intended surface, so no console window on launch. The
-    # transcript/log stream still goes to a logfile / can be seen with --no-tray
-    # from a terminal during development.
+    # Tray UI is the intended surface, so no console window on launch. Logs go
+    # to %LOCALAPPDATA%\WisprDragon\client.log (rotating); run from a terminal
+    # with --no-tray during development to see them live.
     console=False,
     disable_windowed_traceback=False,
     target_arch=None,

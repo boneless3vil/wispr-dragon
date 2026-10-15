@@ -76,3 +76,36 @@ def test_result_none_before_apply(qapp):
         assert dlg.result_correction() is None
     finally:
         dlg.deleteLater()
+
+
+def test_apply_without_edit_returns_the_original_verbatim(qapp):
+    """Regression: .strip() turned an unedited "Hello.\n" into "Hello." — a
+    bogus correction that ate the dictated newline and was learned."""
+    dlg = CorrectionDialog("Hello.\n", dictionary=None)
+    try:
+        dlg.apply_now()
+        assert dlg.result_correction() == ("Hello.\n", False)
+    finally:
+        dlg.deleteLater()
+
+
+def test_edit_keeps_the_original_surrounding_whitespace(qapp):
+    dlg = CorrectionDialog("\ntheir\n", dictionary=None)
+    try:
+        dlg.correction_input.setText("there")
+        dlg.apply_now()
+        assert dlg.result_correction() == ("\nthere\n", False)
+    finally:
+        dlg.deleteLater()
+
+
+def test_heard_label_shows_markup_as_plain_text(qapp):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QLabel
+
+    dlg = CorrectionDialog("<b>bold</b>", dictionary=None)
+    try:
+        heard = [w for w in dlg.findChildren(QLabel) if "<b>bold</b>" in w.text()]
+        assert heard and heard[0].textFormat() == Qt.TextFormat.PlainText
+    finally:
+        dlg.deleteLater()

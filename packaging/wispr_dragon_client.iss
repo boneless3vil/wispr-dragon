@@ -5,12 +5,16 @@
 ; Per-user install (no admin), so it lands in the user's Programs folder.
 ;
 ; Build the PyInstaller bundle first (see packaging/README.md), then compile:
-;   ISCC.exe /DSourceDir="C:\Users\<you>\wd_build\dist\WisprDragonClient" packaging\wispr_dragon_client.iss
+;   ISCC.exe /DSourceDir="C:\Users\<you>\wd_build\dist\WisprDragonClient" /DMyAppVersion=1.0.0 packaging\wispr_dragon_client.iss
 ; The default SourceDir below is a neutral placeholder; the README builds to
 ; $HOME\wd_build, so always pass /DSourceDir to match your actual bundle path.
 
 #define MyAppName "Wispr Dragon Client"
-#define MyAppVersion "1.0.0"
+; Override at compile time with /DMyAppVersion=1.2.3 (keep it in step with
+; pyproject.toml's version); the default only covers ad-hoc local builds.
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "Jonathan Baldwin"
 #define MyAppExeName "WisprDragonClient.exe"
 
