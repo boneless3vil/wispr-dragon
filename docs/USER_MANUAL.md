@@ -6,8 +6,8 @@ dictate (including spoken punctuation), voice commands, correction and
 vocabulary, macros, every keyboard shortcut, and a full command‑line and
 configuration reference.
 
-For a first‑time install see the [README](../README.md) and
-[quickstart](quickstart.md). This document assumes it's installed.
+For a first‑time install see the [README](../README.md). This document assumes
+it's installed.
 
 ---
 
@@ -159,9 +159,26 @@ the server):
 | "new line" | line break | | "ellipsis" | `…` (`...`) |
 | "new paragraph" | blank line | | "tab" | tab |
 
-Automatic tidy‑up: spaces before `.,!?;:` are removed, and the first word of a
+"open/close parenthesis", "open/close parentheses" and "left/right paren" also
+work. Automatic tidy‑up: spaces before `.,!?;:` are removed, doubled marks (your
+spoken "comma" plus the engine's own) collapse to one, and the first word of a
 new sentence (after `.`, `!`, `?`) is capitalized. Words in your custom
 vocabulary are re‑cased to their proper spelling (see §6).
+
+### Spoken capitalization
+
+| Say | Effect | Example → result |
+|---|---|---|
+| "cap ‹word›" | Capitalize the next word | "cap police" → `Police` |
+| "all caps ‹word›" | UPPERCASE the next word | "all caps urgent" → `URGENT` |
+| "no caps ‹word›" | lowercase the next word | "no caps Monday" → `monday` |
+| "caps on … caps off" | Capitalize Each Word in between | "caps on the quick fox caps off" → `The Quick Fox` |
+| "all caps on … all caps off" | UPPERCASE the span | |
+| "no caps on … no caps off" | lowercase the span | |
+
+A span with no "off" runs to the end of the utterance; a stray "caps off" on its
+own is simply dropped. Mid‑sentence, Whisper occasionally hears "cap" as another
+word — a short pause before it helps.
 
 ### How text is injected (Windows client)
 
@@ -185,6 +202,9 @@ These work in the local desktop app (`--ui` or headless). They do **not** work
 in the Windows client.
 
 ### Always‑on commands (any mode)
+
+Say each one as its own utterance — "scratch that" alone runs the command, but
+"scratch that itch" is just dictated. While asleep, only "wake up" is heard.
 
 | Say | Does |
 |---|---|
@@ -239,13 +259,18 @@ Say **"correct that"** (or "correct this") right after a phrase to fix it.
 - **Windows client:** a dialog shows what was heard plus alternates and a
   freehand field. Choose or type the fix and click **Apply** — the client
   backspaces the previously injected text and retypes the correction, then
-  teaches the fix to the server so it auto‑applies next time. Tick **Always
-  apply** to make the correction permanent immediately.
+  teaches the fix to the server. The corrected word joins your vocabulary
+  (biasing recognition toward it) right away; the *rewrite* itself applies
+  automatically once you've made the same correction
+  `correction.auto_apply_threshold` times (default 3). Tick **Always apply** to
+  make it automatic immediately.
 - **Local desktop app:** the correction window shows the original with fuzzy
   suggestions from your dictionary, an editable field, and **Always apply**.
 
-> Selection is by click or typing. (Selecting an alternate by *voice* — "choose
-> 2" — is not wired up yet.)
+> In the **Windows client**, speech goes to the open correction window instead of
+> being typed: say "choose 2" to pick an alternate, "cancel" to close it, or just
+> say the right words to fill the correction field. In the desktop app, select by
+> click or typing.
 
 ### Commands & Vocabulary browser — (Local desktop app)
 
@@ -265,10 +290,12 @@ Your dictionary lives at `~/.wispr_dragon/user_dictionary.json`.
 A macro maps a spoken trigger to an action. Full details in
 [docs/macros.md](macros.md); the essentials:
 
-- **Where they live:** `~/.wispr_dragon/macros/*.yaml` (one macro per file). Ship
-  examples are in `data/default_macros.yaml`.
+- **Where they live:** `~/.wispr_dragon/macros/*.yaml` — each file holds a
+  `macros:` list (the Commands tab writes one macro per file). Sample macros are
+  in `wispr_dragon/data/default_macros.yaml` (not loaded automatically).
 - **Trigger:** a phrase, optionally with a `{placeholder}` that captures a word
-  — e.g. `open {app}`.
+  (substituted into a launch macro's `program:`). Matching ignores case and
+  trailing punctuation, and the trigger must be the whole utterance.
 - **Action types:**
   | Action | Field | Does |
   |---|---|---|
@@ -412,7 +439,12 @@ warns; set one with `--print-key` for anything beyond localhost.)
 | `device` | Mic index from `--list-devices`, or `null` for the system default |
 | `mode` | `ptt` or `toggle` |
 | `hotkey` | pynput key name (e.g. `ctrl_r`, `f9`) |
+| `allow_injected_hotkey` | Optional, default `false`: software-generated presses of the hotkey (VoiceAttack, Stream Deck, AutoHotkey, foot-pedal software) are ignored so the client's own Ctrl+V can't toggle the mic. Set `true` if you trigger the hotkey from such a tool |
 | `inject_method` | `paste` (default) or `sendinput` |
+| `paste_settle_ms` | Optional, default `250` (max `2000`): how long after Ctrl+V your previous clipboard is restored. Raise it if a slow app (Word, Teams, VS Code) pastes your *old* clipboard instead of the dictation. Dictation is kept out of Win+V history and cloud clipboard sync |
+
+The client logs to `client.log` in the same folder (rotated at 1 MB), which is
+the place to look when the packaged client — which has no console — misbehaves.
 
 ---
 
@@ -461,11 +493,11 @@ repo), or ensure the repo is on `PYTHONPATH`.
 | `~/.wispr_dragon/scripts/` | Signed macro scripts (+ `.manifest.json`) |
 | `~/.wispr_dragon/trusted.json` | Programs/scripts you chose to trust |
 | `~/.wispr_dragon/logs/` | Logs |
-| `%LOCALAPPDATA%\WisprDragon\config.json` | Windows client settings |
+| `%LOCALAPPDATA%\WisprDragon\config.json` | Windows client settings (holds the API key) |
+| `%LOCALAPPDATA%\WisprDragon\client.log` | Windows client log |
 
 ---
 
 *Some advanced items are intentionally omitted here because they are not yet
-wired up for end users (voice selection inside the correction dialog, the config
-settings GUI, and dictation‑mode capitalization voice commands). They may appear
-in a future release.*
+wired up for end users (voice selection in the desktop app's correction window
+and the config settings GUI). They may appear in a future release.*

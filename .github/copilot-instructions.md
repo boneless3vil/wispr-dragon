@@ -3,8 +3,8 @@
 Purpose: concise guidance for Copilot sessions to make effective edits and suggestions in this repo.
 
 Build / Install
-- User install (PyPI): `pip install wispr_dragon`
-- Dev install (recommended): `pip install -e ".[gui,dev,openai-api,whisper-fallback]"`
+- Not published to PyPI; install from a clone.
+- Dev install (what CI uses): `pip install -e ".[dev,server,client]"` (add `gui` for the desktop app)
 - Packaging (optional): `python -m build` (requires `build` package)
 
 Test
@@ -15,9 +15,8 @@ Test
 - Useful scripts: `python scripts/test_audio.py`, `python scripts/test_transcription.py`
 
 Lint / Typecheck
-- No enforced linter in CI. Preferred local tools:
-  - `ruff .` (fast diagnostics)
-  - `mypy --strict wispr_dragon` (type checks on changed modules)
+- CI enforces `ruff check .` (rules in pyproject.toml); run it before pushing.
+- No typecheck is enforced; `mypy --strict <new module>` is preferred for new code.
 
 Run / Dev commands
 - Run server: `python -m wispr_dragon --server`
@@ -31,14 +30,14 @@ High-level architecture
   - Local: faster-whisper, openai-whisper
   - Cloud: openai API engine
 - Processing: `wispr_dragon/correction/` (hotwords, user dictionary, post-processing)
-- Output / injection: `wispr_dragon/output/` (Windows-focused injection helpers)
+- Output / injection: `wispr_dragon/output/` (Linux desktop-app injector: xdotool / xclip / wl-clipboard); the Windows client injects via `client/windows_injector.py`
 - Modes & UI: `wispr_dragon/modes/`, `wispr_dragon/ui/` (dictation box, correction UI)
 - Server/client: `server/` and `client/` directories for WebSocket audio stream and client capture/inject logic
 
 Key repo conventions (important for Copilot tasks)
 - New STT engines: subclass `wispr_dragon/engine/base.py`, register in `wispr_dragon/engine/__init__.py`, and add an optional-dependency extra in `pyproject.toml` under `[project.optional-dependencies]`.
 - Config: primary runtime config is `~/.wispr_dragon/config.yaml`. Prefer adding defaults to `config.py` and validating with `tests/test_config_validation.py` when changing schema.
-- Cross-platform injection: `output/text_injector.py` and `client/windows_injector.py` are Windows-first. Linux/macOS injectors are not complete — changes here require manual cross-platform verification.
+- Cross-platform injection: the client injects only on Windows today (`client/windows_injector.py`); `output/text_injector.py` serves the Linux desktop app. Linux/macOS client injectors are not built yet — changes here require manual cross-platform verification.
 - Tests: E2E tests live in `tests/` and may spin up real server+client; run them in WSL2 or a Linux environment to avoid audio/OS differences.
 - PR/commit titles: follow `<scope>: <imperative>` (e.g., `client: add Linux text injector via ydotool`). See `.claude/commands/ship.md` for the ship gate procedure used by maintainers.
 - Secrets: never commit API keys. OpenAI key is expected from `OPENAI_API_KEY` env var or `~/.wispr_dragon/config.yaml` (which is gitignored).

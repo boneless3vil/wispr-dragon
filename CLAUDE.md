@@ -24,10 +24,10 @@ wispr_dragon/
   engine/      Pluggable STT: faster-whisper, openai-api, openai-whisper
   audio/       Mic capture + Silero VAD
   ui/          PyQt6 dictation box, settings, macro editor, correction, tray
-  output/      Text injection (currently Windows-only)
+  output/      Text injection for the Linux/WSLg desktop app (xdotool / xclip / wl-clipboard)
   modes/       Command vs dictation mode
   correction/  Post-processing: hotwords, dictionary
-  macros/      Voice-triggered scripts (with security sandbox)
+  macros/      Voice-triggered macros (hash-pinned, time-limited scripts — not a sandbox)
 tests/         pytest, includes server/client E2E
 scripts/       Benchmarks, audio test utilities
 ```
@@ -38,14 +38,15 @@ scripts/       Benchmarks, audio test utilities
 - **WebSocket protocol** (`websockets >=12,<13`) for server↔client audio + transcript stream. Auth required; reconnect storms on auth failure were fixed once — don't reintroduce.
 - **Audio**: `sounddevice` (PortAudio) for capture, Silero VAD for endpointing. WSL2 needs PulseAudio or network audio fallback.
 - **STT engines** implement `engine/base.py` interface. `gpu_advisor.py` recommends model size based on hardware.
-- **Cross-platform client** is the active expansion area. Today `output/text_injector.py` + `client/windows_injector.py` are Windows-only. Linux/macOS injectors are TBD (`ydotool` on Linux, CGEvent on macOS).
-- **Tests**: `pytest tests/ -v`. E2E tests in `test_server_client_e2e.py` spin up real server+client.
+- **Cross-platform client** is the active expansion area. Today the client injects only on Windows (`client/windows_injector.py`, clipboard paste by default); `output/text_injector.py` serves the Linux desktop app only. Linux/macOS client injectors are TBD (`ydotool` on Linux, CGEvent on macOS).
+- **Tests**: `pytest tests/ -v`. E2E tests in `test_server_client_e2e.py` spin up real server+client. `tests/conftest.py` points HOME at a temp dir, so tests never touch real user data.
+- **Version**: single source is `wispr_dragon/__init__.py` (`__version__`); pyproject reads it dynamically.
 
 ## Dev environment
 
-- Server dev runs in **WSL2 Ubuntu** (`/home/jon/wispr-dragon`), conda env `wispr-dragon` or venv.
+- Server dev runs in **WSL2 Ubuntu** (`/home/jon/wispr_dragon`), conda env `wispr_dragon` (Python 3.11; `/home/jon/miniconda3/envs/wispr_dragon/bin/python`).
 - Run server: `python -m wispr_dragon --server`. Run UI: `wispr_dragon --ui`. Both honor `~/.wispr_dragon/config.yaml`.
-- Lint/typecheck: project doesn't enforce one yet — when adding, prefer `ruff` + `mypy --strict` on new modules only.
+- Lint: CI enforces `ruff check .` (rules in `pyproject.toml`). Typecheck: none enforced yet — prefer `mypy --strict` on new modules only.
 
 ## Conventions
 
@@ -60,10 +61,10 @@ The repo accumulated phase-tracking and session-notes files during early develop
 
 ## Branch & PR flow
 
-- Active branch: `feature/rename-wispr_dragon`. Main is `main`.
+- Development happens on the `test` branch; `main` only receives `--no-ff` merges of `test` once tests pass and the user confirms. CI runs on pushes to `main`/`test` and on PRs to `main`.
 - PR titles: `<scope>: <imperative>` — e.g. `client: add Linux text injector via ydotool`.
 - Before opening a PR: `pytest tests/ -v` must pass; for cross-platform changes, the **cross-platform-check** invariant in `.claude/commands/ship.md` applies.
-- Branching: feature branches off `main`. The **git-ops** agent handles branch creation, PR opening, and release tagging via `gh`.
+- Branching: work on `test` (short-lived feature branches off `test` are fine for big changes). The **git-ops** agent handles branch creation, PR opening, and release tagging via `gh`.
 
 ## Where to delegate
 

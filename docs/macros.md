@@ -34,12 +34,16 @@ Say "open browser" — Wispr Dragon will launch Firefox. Say "next tab" and it s
 ### 1. Launch Programs
 
 ```yaml
-- trigger: "open {app}"
+- trigger: "open firefox"
   action: launch
-  program: "{app}"
+  program: firefox
 ```
 
 Say "open firefox" and it runs `firefox`. Programs must be in your PATH.
+
+> Avoid a catch-all `trigger: "open {app}"` / `program: "{app}"`: it launches
+> *any* binary on PATH that a misrecognition happens to name. Write one launch
+> macro per program you actually want.
 
 ### 2. Inject Text
 
@@ -166,13 +170,12 @@ Useful for restricting certain features while keeping others.
 
 ## Placeholders
 
-Macros support text placeholders. Say "open firefox" and it matches the trigger "open {app}" with `app=firefox`:
-
-```yaml
-- trigger: "open {app}"
-  action: launch
-  program: "{app}"
-```
+A trigger may contain a `{placeholder}` that captures the spoken word(s) in its
+place; the trigger must still match the whole utterance. Today the captured value
+is substituted only into a `launch` action's `program:` field (not into `args:`
+or a `text` action's `content:`), so placeholders are effectively a way to name
+the program at speaking time — with the PATH risk described under
+[Launch Programs](#1-launch-programs). Prefer one explicit macro per program.
 
 Placeholders extract one word or phrase (alphanumeric + spaces).
 

@@ -22,10 +22,8 @@ This guide covers setting up Wispr_Dragon to use the OpenAI API for speech recog
 ## Step 2: Install Dependencies
 
 ```bash
-# Install OpenAI SDK and audio conversion library
-pip install openai pydub
-
-# Or from project directory:
+# From the project directory (installs the OpenAI SDK; audio is sent as WAV,
+# so no ffmpeg/pydub is needed):
 pip install -e ".[openai-api]"
 ```
 
@@ -170,21 +168,6 @@ You're hitting rate limits:
 1. Wait 30 seconds
 2. Upgrade to paid account for higher limits
 3. Check usage at https://platform.openai.com/account/billing/usage
-
-### Audio conversion fails (pydub error)
-
-Install ffmpeg:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install ffmpeg
-
-# macOS
-brew install ffmpeg
-
-# Windows (with conda)
-conda install -c conda-forge ffmpeg
-```
 
 ### "No transcription engine available"
 
