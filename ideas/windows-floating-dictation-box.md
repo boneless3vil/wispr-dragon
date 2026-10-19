@@ -56,6 +56,12 @@ The box must have **all** the Dragon Dictation Box capabilities, not just plain
 dictation: **correction, spoken formatting, modes (command/spelling/numbers),
 "scratch that", "correct that"**, etc.
 
+> **Superseded (2026-10-19):** the command engine will run in the **client**, not
+> on the server — the server stays a text-only recognizer. See
+> [protocol-and-client-commands.md](protocol-and-client-commands.md) (§8 lists
+> what changes here: the box becomes an `OutputSink`, phases P2/P5–P7 replace
+> the "server + protocol change" below). The analysis below is kept for history.
+
 **Architectural consequence — the big one:** those command/mode features currently
 live ONLY in the local desktop app's orchestrator (`modes/orchestrator.py`,
 `modes/mode_manager.py`) and the **server pipeline deliberately skips them** — the

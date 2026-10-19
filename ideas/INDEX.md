@@ -13,16 +13,20 @@ You asked which of the four scopes to do first. My ranking:
 
 Bugs & hygiene (`05-bugs-and-hygiene/`) sit alongside everything — pick off as you touch the relevant files.
 
-## Reality check
+## Current plan (2026-10-19)
 
-While surveying the repo I noticed a few mismatches between CLAUDE.md and the actual code. They're worth knowing before you commit to a plan:
+**Next big work item:** [protocol-and-client-commands](protocol-and-client-commands.md)
+— a shared `protocol.py` with a handshake, then the command engine (modes,
+"scratch that", spelling/numbers, macros) moves into the client while the
+server stays a text-only recognizer. Nine PR-sized phases; it unblocks the
+[Windows floating dictation box](windows-floating-dictation-box.md) and retiring
+the `--ui` desktop path.
 
-- CLAUDE.md says **Wispr cloud** is a primary engine — there is no Wispr engine in `engine/`, and `EngineConfig.backend` doesn't list it. See [wispr-cloud-engine](01-stt-quality/wispr-cloud-engine.md).
-- CLAUDE.md references `ui/dictation_box.py` and `ui/macro_editor.py` — neither file exists. See [dictation-box](03-dragon-parity/dictation-box.md) and [command-vocabulary-browser](03-dragon-parity/command-vocabulary-browser.md).
-- CLAUDE.md says modes include **dictation, command, spelling, numbers** — only `command_mode.py` exists. See [modes-spelling-numbers](03-dragon-parity/modes-spelling-numbers.md).
-- CLAUDE.md says **system tray + floating dictation box** — no tray code anywhere. See [dragonbar-system-tray](03-dragon-parity/dragonbar-system-tray.md).
-
-This isn't criticism; it's just the gap between vision and code. The ideas below are organized to close it.
+Since this index was written, the desktop dictation box, macro/vocabulary
+editor, tray, mic-state model and spelling/numbers modes have all been built
+(desktop app), and the Windows client has a tray and "correct that". The one
+gap from the original survey that remains is the **Wispr cloud** engine —
+see [wispr-cloud-engine](01-stt-quality/wispr-cloud-engine.md).
 
 ---
 
