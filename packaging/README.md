@@ -104,6 +104,20 @@ adds a Start-Menu shortcut + uninstaller, and offers an optional desktop icon.
 (default `1.0.0` — pass the pyproject version for real releases); `/O` sets the
 output dir.
 
+## Releasing
+
+Versions follow semver (`MAJOR.MINOR.PATCH`) and live in exactly one place:
+`wispr_dragon/__init__.py` (`__version__`) — pyproject reads it, and the server
+reports it to clients. The package is not published to PyPI.
+
+1. On `test`: bump `__version__`, run `pytest` and `ruff check .`, push, and
+   wait for CI (ubuntu + windows + wheel build) to go green.
+2. Merge `test` → `main` with `--no-ff` and push both branches.
+3. On Windows, build the client bundle (see **Build**) and the installer with
+   `/DMyAppVersion=<version>` (see **Installer**), then run the **Smoke test**.
+4. Tag and publish: `git tag v<version> && git push origin v<version>`, then
+   `gh release create v<version> --generate-notes "$HOME\wd_build\WisprDragonClient-Setup-<version>.exe"`.
+
 ## Notes & follow-ons
 
 - **onedir vs onefile**: this spec is onedir (faster startup, fewer AV false

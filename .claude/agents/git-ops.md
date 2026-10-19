@@ -44,7 +44,7 @@ If rebase produces conflicts, STOP and hand back to the user — do not auto-res
 **Tag a release**
 - Only on `main`, only after `pytest tests/ -v` passes.
 - `git tag -a v<MAJOR.MINOR.PATCH> -m "<release name>"` then `git push origin v...`.
-- Open a GitHub Release via `gh release create v... --notes-file RELEASE.md` (or `--generate-notes` if no manual notes prepared).
+- Open a GitHub Release via `gh release create v... --generate-notes` (attach the Windows installer; full steps in `packaging/README.md` → Releasing).
 
 Hard rules:
 - Never `git push --force` to `main` or any branch you didn't create in this session.
