@@ -9,6 +9,15 @@ every phase.
 
 ## Decisions (Jon, 2026-10-19)
 
+- **Product lineup — one codebase, three builds** (not separate branches):
+  Windows standalone (recognizer on the Windows PC's own GPU, no Linux server),
+  Linux standalone, and client + server (thin Win/macOS/Linux clients + the
+  Linux server). All get the full feature set. A standalone build is the client
+  plus a local recognizer, so this design's client work serves all three; how
+  the local recognizer runs (loopback subprocess reusing this protocol vs. an
+  in-process recognizer behind the same interface) is decided when the first
+  standalone build is packaged. Windows standalone means faster-whisper on
+  Windows CUDA (installer grows from ~35 MB to ~1–2 GB).
 - **Deployment:** the server stays on the Linux station; clients (Windows,
   Linux, macOS) stay as lightweight as possible without giving up performance,
   capabilities or security. Clients on other machines reach the server over the

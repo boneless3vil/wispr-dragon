@@ -14,6 +14,12 @@ Speech recognition app: Linux-based WebSocket server + cross-platform desktop cl
   - **Modes**: dictation, command, spelling, numbers. We have `modes/` — extend it as we add Dragon-equivalent modes.
   - **Hotkeys**: push-to-talk + toggle (already in `client/hotkey.py`). Dragon's "+ on numpad" is the muscle-memory standard for many users — consider it as a default.
 - **What we explicitly are NOT copying**: Dragon's proprietary file formats, profile system internals, or DLLs. We design our own equivalents.
+- **Product lineup — one codebase, three builds** (decided 2026-10-19; never separate product branches):
+  1. **Windows standalone** — client + recognizer on the same Windows PC, running on its own GPU; no Linux server needed.
+  2. **Linux standalone** — client + recognizer on one Linux machine.
+  3. **Client + server** — thin clients (Windows / macOS / Linux) talking to the Linux recognition server.
+
+  All three get the full feature set (modes, commands, macros, spelling/numbers, correction, dictation box). "Standalone" = the client running a local recognizer, so the builds differ only in packaging. Roadmap: `ideas/protocol-and-client-commands.md`.
 
 ## Architecture
 
