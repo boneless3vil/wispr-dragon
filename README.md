@@ -31,9 +31,10 @@ git clone https://github.com/boneless3vil/wispr-dragon.git
 cd wispr-dragon
 ```
 
-**Server** (Linux / WSL2, Python 3.11+):
+**Server** (Linux / WSL2, Python 3.11+, in a virtual environment):
 
 ```bash
+python3 -m venv venv && source venv/bin/activate
 # NVIDIA: the CUDA-12 torch build also supplies the cuBLAS/cuDNN CTranslate2 needs
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
 pip install -e ".[server]"

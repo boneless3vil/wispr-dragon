@@ -13,7 +13,7 @@ Workflow:
    find . -maxdepth 2 -type f \( -name "*.md" -o -name "*.txt" -o -name "*_NOTES*" -o -name "SESSION_*" -o -name "PHASE_*" \) -not -path './.git/*'
    ```
 2. Categorize each candidate file into one of:
-   - **Keep at root** — README.md, LICENSE, CLAUDE.md, pyproject.toml, environment.yml (and CHANGELOG.md / CONTRIBUTING.md if they are ever added).
+   - **Keep at root** — README.md, LICENSE, CLAUDE.md, pyproject.toml (and CHANGELOG.md / CONTRIBUTING.md if they are ever added).
    - **Move to `docs/`** — user-facing guides, with consistent naming. `docs/USER_MANUAL.md` is the single user reference; `docs/macros.md` and `docs/setup-openai.md` are its deep dives. Release steps live in `packaging/README.md`.
    - **Move to `docs/dev-notes/` then gitignore** — internal scratch: SESSION_NOTES_*, PHASE_*_SUMMARY, BUILD_LOG, PUSH_TO_GITHUB, GITHUB_SETUP, GITHUB_NEXT_STEPS, GIT_CHEATSHEET, DISTRIBUTION_*, SESSION_SUMMARY. Keep them for personal reference; stop tracking them.
    - **Delete** — true duplicates, obsolete plans, files explicitly superseded by something newer.

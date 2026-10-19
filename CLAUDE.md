@@ -44,7 +44,7 @@ scripts/       Benchmarks, audio test utilities
 
 ## Dev environment
 
-- Server dev runs in **WSL2 Ubuntu** (`/home/jon/wispr_dragon`), conda env `wispr_dragon` (Python 3.11; `/home/jon/miniconda3/envs/wispr_dragon/bin/python`).
+- Server dev runs in **WSL2 Ubuntu** (`/home/jon/wispr_dragon`) from the repo venv: `source venv/bin/activate` (Python 3.13; interpreter `/home/jon/wispr_dragon/venv/bin/python`). It holds the working GPU/audio stack — CUDA-12 torch (`cu126` index) and sounddevice linked to the custom PulseAudio-enabled PortAudio in `/usr/local/lib`. Don't use conda for this project (its PortAudio is ALSA-only and shadows that build). CI also tests 3.11.
 - Run server: `python -m wispr_dragon --server`. Run UI: `wispr_dragon --ui`. Both honor `~/.wispr_dragon/config.yaml`.
 - Lint: CI enforces `ruff check .` (rules in `pyproject.toml`). Typecheck: none enforced yet — prefer `mypy --strict` on new modules only.
 
