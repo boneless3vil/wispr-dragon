@@ -7,6 +7,36 @@ that", spelling/numbers and macros run on the client; the `--ui` desktop path is
 retired once its parts live in the client. Backward compatibility is kept at
 every phase.
 
+## Decisions (Jon, 2026-10-19)
+
+- **Deployment:** the server stays on the Linux station; clients (Windows,
+  Linux, macOS) stay as lightweight as possible without giving up performance,
+  capabilities or security. Clients on other machines reach the server over the
+  network, so the transport matters.
+- **TLS is always required.** No measurable cost (one handshake per connect;
+  per-frame encryption is microseconds vs. hundreds of ms of transcription) and
+  no lost capability. From P4 on, `server.plaintext` defaults to **false**; the
+  setup dialog requires the pinned fingerprint. Supersedes the "default true for
+  now" / open question 4 below.
+- **Dragon-style Normal mode:** built-in editing commands and macros fire in
+  Dictation mode when spoken as the whole utterance (first-use confirmation for
+  macros); Command mode remains the strict commands-only option.
+- **Sleep:** both the hotkey and "wake up" wake a sleeping mic.
+- **Mode switching: voice + tray/hotkeys.** Short Dragon aliases ("dictation
+  mode", "spelling mode", "numbers mode", "command mode") plus the existing
+  phrases; a tray "Mode" menu; optional per-mode hotkeys. Voice switching must
+  work *mid-toggle-session* ("dictation mode … spelling mode … dictation
+  mode"), via pause segmentation:
+  - The server still transcribes the whole utterance in one pass (accuracy),
+    with word timestamps (already computed by faster-whisper, currently
+    discarded), and splits the result at pauses ≥ ~700 ms (configurable).
+  - New feature flag `segments`: `transcript.segments?[{text, raw, start,
+    end}]`, sent only when negotiated. Old clients keep receiving `text`.
+  - The client walks the segments in order through the engine: a segment that
+    is exactly a command (e.g. "spelling mode") runs it; following segments are
+    handled in the new mode using their `raw` text (so spelling isn't polluted
+    by server formatting). Lands with P2 (server) and P6 (client).
+
 ## 0. What the code says (findings that shape this design)
 
 - **The server already only recognizes, but it formats every utterance.**
@@ -71,7 +101,8 @@ no third-party module.
   `CLOSE_UNAUTHORIZED = 4001`, new `CLOSE_INCOMPATIBLE = 4002` with reason
   `protocol_major` | `audio_format` | `bad_hello`.
 - Features: `utterance` (existing); `hello`, `utterance_mode`, `raw`,
-  `alternatives`; `vocab_sync` (later); `partial`, `speaker_gate` (reserved —
+  `alternatives`, `segments` (pause-split pieces, see Decisions); `vocab_sync`
+  (later); `partial`, `speaker_gate` (reserved —
   `speaker_gate` is the name the voiceprint design already uses).
 - Wire modes: `dictation | command | spelling | numbers | sleep`.
 
@@ -117,7 +148,7 @@ points `parse_client(raw)` / `parse_server(raw)` return a message or
 | C→S | `utterance_start` | id?, mode? | `utterance`; mode needs `utterance_mode` | baseline; mode P2 |
 | S→C | `utterance_ack` | id? | `utterance` | baseline |
 | C→S | `utterance_end` | id?, mode? (late-binding override) | as above | baseline; mode P2 |
-| S→C | `transcript` | text, final, language, duration, id?, utterance?, continued?, mode? (applied), raw?, alternatives?[] | mode→`utterance_mode`; `raw`; `alternatives` | baseline; P2 |
+| S→C | `transcript` | text, final, language, duration, id?, utterance?, continued?, mode? (applied), raw?, alternatives?[], segments?[{text,raw,start,end}] | mode→`utterance_mode`; `raw`; `alternatives`; `segments` | baseline; P2 |
 | C→S | `pause` / `resume` | — | — | baseline |
 | C↔S | `ping` / `pong` | ts? | — | baseline |
 | C→S | `learn_correction` | wrong, correct, always? | — | baseline |
@@ -453,7 +484,8 @@ injector (ydotool) and the floating box. Delete `process_text` / the handlers,
 - **Linux desktop users** — retiring `--ui` before a Linux client injector
   exists would strand them (hence P9's prerequisites).
 
-**Open questions for Jon**
+**Open questions for Jon** — all answered 2026-10-19 (see **Decisions** at the
+top); kept for the reasoning.
 
 1. **Dragon "Normal mode":** should built-in editing commands and macros fire
    in Dictation mode when spoken as the whole utterance (first-use
